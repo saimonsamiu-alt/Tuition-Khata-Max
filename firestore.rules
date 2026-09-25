@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Study Adda - Mini Social Media Posts
+    match /community_posts/{postId} {
+      allow read: if true;
+      allow create: if request.resource.data.content is string 
+                    && request.resource.data.content.size() > 0;
+      allow update, delete: if true;
+    }
+
+    // Study Adda - Daily Stories
+    match /study_stories/{storyId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
+    }
+
+    // User Social Profiles
+    match /user_profiles/{slug} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Personal 1-on-1 Chats
+    match /personal_chats/{chatId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Chat Messages
+    match /chat_messages/{messageId} {
+      allow read: if true;
+      allow create: if (request.resource.data.text is string && request.resource.data.text.size() > 0)
+                    || (request.resource.data.imageUrl is string && request.resource.data.imageUrl.size() > 0)
+                    || (request.resource.data.imageLink is string && request.resource.data.imageLink.size() > 0)
+                    || (request.resource.data.audioUrl is string && request.resource.data.audioUrl.size() > 0)
+                    || (request.resource.data.audioLink is string && request.resource.data.audioLink.size() > 0)
+                    || (request.resource.data.mediaUrl is string && request.resource.data.mediaUrl.size() > 0);
+      allow update, delete: if true;
+    }
+
+    // Verification Badge Applications
+    match /verified_applications/{appId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Fallback
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

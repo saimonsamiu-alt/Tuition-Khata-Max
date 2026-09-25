@@ -1,0 +1,100 @@
+{
+  "entities": {
+    "UserProfile": {
+      "collection": "user_profiles",
+      "fields": {
+        "name": { "type": "string", "required": true },
+        "slug": { "type": "string", "required": true },
+        "bio": { "type": "string", "required": false },
+        "avatar": { "type": "string", "required": false },
+        "institution": { "type": "string", "required": false },
+        "isVerified": { "type": "boolean", "required": true },
+        "badge": { "type": "string", "required": false },
+        "isPrivateStudent": { "type": "boolean", "required": true },
+        "createdAt": { "type": "number", "required": true }
+      }
+    },
+    "PersonalChat": {
+      "collection": "personal_chats",
+      "fields": {
+        "chatId": { "type": "string", "required": true },
+        "participants": { "type": "array", "required": true },
+        "participantSlugs": { "type": "array", "required": false },
+        "lastMessage": { "type": "string", "required": false },
+        "lastSender": { "type": "string", "required": false },
+        "lastSenderSlug": { "type": "string", "required": false },
+        "lastMessageAt": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": true },
+        "messageState": { "type": "map", "required": false },
+        "typingStatus": { "type": "map", "required": false },
+        "archivedBy": { "type": "map", "required": false },
+        "pinnedBy": { "type": "map", "required": false }
+      }
+    },
+    "ChatMessage": {
+      "collection": "chat_messages",
+      "fields": {
+        "chatId": { "type": "string", "required": true },
+        "senderSlug": { "type": "string", "required": true },
+        "senderName": { "type": "string", "required": true },
+        "senderAvatar": { "type": "string", "required": false },
+        "senderBadge": { "type": "string", "required": false },
+        "text": { "type": "string", "required": false },
+        "imageUrl": { "type": "string", "required": false },
+        "imageLink": { "type": "string", "required": false },
+        "mediaUrl": { "type": "string", "required": false },
+        "audioUrl": { "type": "string", "required": false },
+        "audioLink": { "type": "string", "required": false },
+        "audioDuration": { "type": "number", "required": false },
+        "messageType": { "type": "string", "required": false },
+        "timestamp": { "type": "number", "required": true },
+        "status": { "type": "string", "required": false },
+        "isRead": { "type": "boolean", "required": false },
+        "readAt": { "type": "number", "required": false },
+        "readBy": { "type": "string", "required": false }
+      }
+    },
+    "VerifiedApplication": {
+      "collection": "verified_applications",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "slug": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "institution": { "type": "string", "required": true },
+        "studentId": { "type": "string", "required": false },
+        "phone": { "type": "string", "required": false },
+        "batchName": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true },
+        "appliedAt": { "type": "number", "required": true }
+      }
+    },
+    "CommunityPost": {
+      "collection": "community_posts",
+      "fields": {
+        "authorName": { "type": "string", "required": true },
+        "authorRole": { "type": "string", "required": true },
+        "isTeacher": { "type": "boolean", "required": false },
+        "isPrivateStudent": { "type": "boolean", "required": false },
+        "tag": { "type": "string", "required": true },
+        "content": { "type": "string", "required": true },
+        "mediaUrl": { "type": "string", "required": false },
+        "timestamp": { "type": "number", "required": true },
+        "reactions": { "type": "map", "required": false },
+        "comments": { "type": "array", "required": false },
+        "savedCount": { "type": "number", "required": false }
+      }
+    },
+    "StudyStory": {
+      "collection": "study_stories",
+      "fields": {
+        "authorName": { "type": "string", "required": true },
+        "authorRole": { "type": "string", "required": true },
+        "avatar": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "imageUrl": { "type": "string", "required": false },
+        "createdAt": { "type": "number", "required": true },
+        "expiresAt": { "type": "number", "required": true }
+      }
+    }
+  }
+}
