@@ -15,9 +15,15 @@
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.gstatic.com">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-<!-- KaTeX for Math & Science LaTeX equations -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<!-- KaTeX for Math & Science LaTeX equations (asynchronous non-blocking load) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"></noscript>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/mhchem.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="if(typeof renderAllMath==='function')renderAllMath();"></script>
@@ -750,6 +756,43 @@
   body.dark .community-modal {
     background: #1E293B;
     border-color: #334155;
+  }
+  /* Social Profile Modal Styling - Facebook/Instagram Style Scrollable Sheet */
+  .community-modal-overlay.user-profile-overlay {
+    overflow-y: auto !important;
+    align-items: flex-start !important;
+    padding: 24px 12px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .user-social-profile-card {
+    background: #FFFFFF;
+    color: var(--ink);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto !important;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(217, 164, 65, 0.4) transparent;
+  }
+  .user-social-profile-card::-webkit-scrollbar {
+    width: 6px;
+  }
+  .user-social-profile-card::-webkit-scrollbar-thumb {
+    background: rgba(217, 164, 65, 0.4);
+    border-radius: 4px;
+  }
+  body.dark .user-social-profile-card {
+    background: #0F172A !important;
+    border-color: #334155 !important;
+    color: #F8FAFC !important;
+  }
+  .user-profile-body-section {
+    background: #FFFFFF;
+    color: var(--ink);
+  }
+  body.dark .user-profile-body-section {
+    background: #0F172A !important;
+    color: #F8FAFC !important;
   }
   .community-modal-header {
     padding: 14px 18px;
@@ -1811,6 +1854,23 @@
     box-shadow: 0 0 0 3px rgba(217, 164, 65, 0.4) !important;
     transition: transform 0.2s ease, box-shadow 0.2s ease !important;
   }
+  
+  /* Smooth Auto-Scroll & Comment Highlight */
+  .chat-messages-scroll,
+  .community-modal-body,
+  .profile-comments-scroll {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+  @keyframes commentHighlightPulse {
+    0% { background: rgba(217, 164, 65, 0.32); transform: scale(1.01); }
+    50% { background: rgba(217, 164, 65, 0.16); }
+    100% { background: var(--paper); transform: scale(1); }
+  }
+  .new-comment-pulse {
+    animation: commentHighlightPulse 1.8s ease forwards;
+    border-color: var(--gold) !important;
+  }
 </style>
 
 
@@ -1825,7 +1885,7 @@
 </div>
 <button id="logoutFab" onclick="currentTeacher=null; go('landing');" style="display:none;">🚪 লগ-আউট</button>
 
-<!-- Firebase SDK (Compat CDN for instant offline-first cloud sync & storage) -->
+<!-- Core Cloud & Application Services -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>

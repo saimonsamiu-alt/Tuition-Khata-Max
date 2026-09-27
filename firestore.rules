@@ -5,50 +5,72 @@ service cloud.firestore {
     match /community_posts/{postId} {
       allow read: if true;
       allow create: if request.resource.data.content is string 
-                    && request.resource.data.content.size() > 0;
-      allow update, delete: if true;
+                    && request.resource.data.content.size() > 0
+                    && request.resource.data.authorSlug is string;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'likes', 'likedBy', 'reactions', 'reactionCounts', 'comments', 'commentCount', 'shares', 'updatedAt'
+                      ]);
+      allow delete: if false; // Prevents mass deletion exploit via public API key
     }
 
     // Study Adda - Daily Stories
     match /study_stories/{storyId} {
       allow read: if true;
-      allow create: if true;
-      allow update, delete: if true;
+      allow create: if request.resource.data.authorSlug is string;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'reactions', 'reactionCounts', 'views', 'viewers'
+                      ]);
+      allow delete: if false; // Prevents mass deletion exploit
     }
 
-    // User Social Profiles
+    // User Social Profiles (Zero password leak policy & unauthorized profile overwrite protection)
     match /user_profiles/{slug} {
       allow read: if true;
-      allow write: if true;
+      allow create: if request.resource.data.slug == slug
+                   && !('password' in request.resource.data)
+                   && !('passwordHash' in request.resource.data);
+      allow update: if request.resource.data.slug == slug
+                   && !('password' in request.resource.data)
+                   && !('passwordHash' in request.resource.data)
+                   && request.resource.data.slug == resource.data.slug;
+      allow delete: if false;
     }
 
     // Personal 1-on-1 Chats
     match /personal_chats/{chatId} {
       allow read: if true;
-      allow write: if true;
+      allow create, update: if request.resource.data.chatId is string;
+      allow delete: if false;
     }
 
-    // Chat Messages
+    // Chat Messages (Supports E2EE encrypted text, photos, video clips, and voice notes)
     match /chat_messages/{messageId} {
       allow read: if true;
-      allow create: if (request.resource.data.text is string && request.resource.data.text.size() > 0)
+      allow create: if request.resource.data.chatId is string 
+                    && request.resource.data.senderSlug is string && (
+                    (request.resource.data.text is string && request.resource.data.text.size() > 0)
                     || (request.resource.data.imageUrl is string && request.resource.data.imageUrl.size() > 0)
                     || (request.resource.data.imageLink is string && request.resource.data.imageLink.size() > 0)
+                    || (request.resource.data.videoUrl is string && request.resource.data.videoUrl.size() > 0)
                     || (request.resource.data.audioUrl is string && request.resource.data.audioUrl.size() > 0)
                     || (request.resource.data.audioLink is string && request.resource.data.audioLink.size() > 0)
-                    || (request.resource.data.mediaUrl is string && request.resource.data.mediaUrl.size() > 0);
-      allow update, delete: if true;
+                    || (request.resource.data.mediaUrl is string && request.resource.data.mediaUrl.size() > 0));
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'isRead', 'readAt', 'readBy', 'reactions', 'status'
+                    ]);
+      allow delete: if false; // Prevents deleting other users' chats
     }
 
     // Verification Badge Applications
     match /verified_applications/{appId} {
       allow read: if true;
-      allow write: if true;
+      allow create: if request.resource.data.studentSlug is string;
+      allow update, delete: if false;
     }
 
-    // Fallback
+    // Close arbitrary backdoor wildcard
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

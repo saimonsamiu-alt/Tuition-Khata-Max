@@ -6,9 +6,128 @@
 // single script did, so nothing about how functions call each other changes.
 // ============================================================================
 
-// ================= STUDENT AUTHENTICATION (Open Sign Up + Instant Verified Batch) =================
+// ================= STUDENT AUTHENTICATION & ADVANCED SECURITY HARDENING =================
 let studentAuthTab = 'login';
 let regAccountType = 'open'; // 'open' or 'private'
+
+// --- Security Helpers: Cryptographic Salted Hashing & Rate Limiting ---
+const AUTH_SECURITY_SALT = 'TuitionKhata_Pepper_Salt_2026_x89';
+const AUTH_RATE_LIMIT_STORAGE_KEY = 'tk_auth_defense_v2';
+
+window.hashPasswordWithSalt = async function(password, salt = AUTH_SECURITY_SALT){
+  if(!password) return '';
+  try {
+    const enc = new TextEncoder();
+    const data = enc.encode(password + '::' + salt);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch(e){
+    return 'fallback_hash_' + password;
+  }
+};
+
+function getAuthRateLimitState(){
+  try {
+    const raw = sessionStorage.getItem(AUTH_RATE_LIMIT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : { failedCount: 0, lockedUntil: 0 };
+  } catch(e){
+    return { failedCount: 0, lockedUntil: 0 };
+  }
+}
+
+function recordFailedLoginAttempt(){
+  const state = getAuthRateLimitState();
+  state.failedCount = (state.failedCount || 0) + 1;
+  if(state.failedCount >= 5){
+    // Lock out automated brute-force attempts for 5 minutes
+    state.lockedUntil = Date.now() + (5 * 60 * 1000);
+  }
+  sessionStorage.setItem(AUTH_RATE_LIMIT_STORAGE_KEY, JSON.stringify(state));
+  return state;
+}
+
+function resetFailedLoginAttempts(){
+  sessionStorage.removeItem(AUTH_RATE_LIMIT_STORAGE_KEY);
+}
+
+window.reportThreatToServer = async function(threatType, payload, honeypotTriggered = false, clientInfo = {}){
+  try {
+    const fullClientInfo = {
+      ...clientInfo,
+      screen: `${window.screen.width}x${window.screen.height}`,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      lang: navigator.language,
+      platform: navigator.platform
+    };
+    await fetch('/api/security/report-threat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        threatType,
+        payload: String(payload || '').substring(0, 300),
+        honeypotTriggered: !!honeypotTriggered,
+        clientInfo: fullClientInfo
+      })
+    });
+  } catch(e){}
+};
+
+function isSuspiciousHackingAttempt(slugInput, passInput, honeypotVal){
+  // 1. Bot filled the hidden honeypot trap field (invisible to real students)
+  if(honeypotVal && honeypotVal.trim().length > 0){
+    window.reportThreatToServer('Honeypot Bot Trap Triggered', `Bot filled trap field with: ${honeypotVal}`, true, { attemptedSlug: slugInput });
+    return true;
+  }
+
+  const raw = ((slugInput || '') + ' ' + (passInput || '')).toLowerCase();
+  // 2. SQL injection, XSS, or remote code execution probe patterns
+  const dangerousPatterns = [
+    "' or '1'='1", "' or 1=1", "union select", "drop table", "<script", "javascript:",
+    "exec(", "xp_cmdshell", "eval(", ";--", "admin'--", "or true--", "' union", "information_schema",
+    "benchmark(", "sleep(", "waitfor delay", "select * from", "1=1--", "' or ''='"
+  ];
+  if(dangerousPatterns.some(p => raw.includes(p))){
+    window.reportThreatToServer('SQLi / Script Injection Exploit Probe', raw, false, { attemptedSlug: slugInput });
+    return true;
+  }
+
+  // 3. Known attack dictionary probe handles
+  const attackUsernames = ['admin', 'root', 'administrator', 'system', 'sysadmin', 'database', 'eval', 'null', 'testuser'];
+  if(attackUsernames.includes((slugInput || '').toLowerCase().trim())){
+    window.reportThreatToServer('Dictionary Recon Username Probe', slugInput, false, { attemptedSlug: slugInput });
+    return true;
+  }
+
+  return false;
+}
+
+window.renderDecoyHoneypotSandbox = function(attackerAttemptSlug){
+  app.innerHTML = `
+    ${header('নিরাপত্তা যাচাইকরণ')}
+    <div class="card" style="padding:22px; margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+        <div style="width:42px; height:42px; border-radius:50%; background:#FEF2F2; display:flex; align-items:center; justify-content:center; font-size:22px;">🛡️</div>
+        <div>
+          <h3 style="margin:0; font-size:16px; color:var(--ink);">অ্যাক্সেস সাময়িক সীমাবদ্ধ</h3>
+          <div style="font-size:12px; color:var(--pencil);">সেশন ভেরিফিকেশন চেকপয়েন্ট</div>
+        </div>
+      </div>
+      
+      <p style="font-size:13.5px; color:var(--ink); line-height:1.5; margin:0 0 16px 0;">
+        অনাকাঙ্ক্ষিত বা অতিরিক্ত অনুরোধের কারণে সিস্টেমের স্বয়ংক্রিয় নিরাপত্তা ব্যবস্থা সাময়িকভাবে এই সেশন সীমাবদ্ধ রেখেছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।
+      </p>
+
+      <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:10px; padding:12px; margin-bottom:16px; font-size:12.5px; color:var(--pencil);">
+        ⏱️ <b>অপেক্ষার সময়:</b> অনুগ্রহ করে ৬০ সেকেন্ড অপেক্ষা করে পুনরায় প্রবেশ করুন।
+      </div>
+
+      <div class="center">
+        <button class="btn btn-gold" onclick="go('landing')">মূল পেজে ফিরে যান</button>
+      </div>
+    </div>
+    ${creditFooter()}
+  `;
+};
 
 function getUserProfile(slug){
   try {
@@ -22,7 +141,9 @@ function saveUserProfile(profile){
   try {
     const raw = localStorage.getItem('tuition_user_profiles_v1');
     const map = raw ? JSON.parse(raw) : {};
-    map[profile.slug] = { ...(map[profile.slug] || {}), ...profile, updatedAt: Date.now() };
+    const safeData = { ...profile };
+    delete safeData.password; // CRITICAL: Never persist plaintext passwords
+    map[profile.slug] = { ...(map[profile.slug] || {}), ...safeData, updatedAt: Date.now() };
     localStorage.setItem('tuition_user_profiles_v1', JSON.stringify(map));
     if(typeof fbSaveUserProfile === 'function'){
       fbSaveUserProfile(map[profile.slug]);
@@ -32,6 +153,10 @@ function saveUserProfile(profile){
 
 function renderStudentAuth(){
   const isLogin = studentAuthTab === 'login';
+  const rateLimit = getAuthRateLimitState();
+  const isLocked = rateLimit.lockedUntil && Date.now() < rateLimit.lockedUntil;
+  const remainingSec = isLocked ? Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000) : 0;
+
   app.innerHTML = `
     ${header('শিক্ষার্থী প্রবেশ ও প্রোফাইল')}
     <div class="card" style="padding: 24px 20px;">
@@ -40,14 +165,28 @@ function renderStudentAuth(){
         <button class="tab-btn ${!isLogin?'active':''}" onclick="studentAuthTab='register'; renderStudentAuth();">✨ নতুন অ্যাকাউন্ট (ফ্রি)</button>
       </div>
 
+      <!-- Hidden Honeypot Trap Field (Invisible to users, catches bots/scanners) -->
+      <input type="text" id="studSecTrapField" name="system_admin_token" autocomplete="off" style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none;" tabindex="-1">
+
+      ${isLocked ? `
+        <div style="background:#FFF1F2; border:1px solid #F43F5E; border-radius:10px; padding:14px; margin-bottom:16px; text-align:center;">
+          <div style="font-size:22px; margin-bottom:4px;">🚨</div>
+          <strong style="color:#BE123C; font-size:14px;">ব্রুট-ফোর্স লকআউট সক্রিয়!</strong>
+          <div style="font-size:12px; color:#9F1239; margin-top:4px;">
+            ধারাবাহিক ৫ বার ভুল পাসওয়ার্ড দেওয়ার কারণে লগইন সাময়িক লক করা হয়েছে।<br>
+            অনুগ্রহ করে <b>${remainingSec} সেকেন্ড</b> পর আবার চেষ্টা করুন।
+          </div>
+        </div>
+      ` : ''}
+
       ${isLogin ? `
         <h2>শিক্ষার্থী লগইন</h2>
         <p class="hint">পূর্বে তৈরি করা নাম/ইউজারনেম ও পাসওয়ার্ড দিয়ে প্রবেশ করো।</p>
         <label class="field-label">ইউজারনেম / ডাকনাম</label>
-        <input type="text" id="studLoginSlug" placeholder="যেমন: rahim বা samia26" onkeydown="if(event.key==='Enter') submitStudentLogin()">
+        <input type="text" id="studLoginSlug" placeholder="যেমন: rahim বা samia26" onkeydown="if(event.key==='Enter') submitStudentLogin()" ${isLocked ? 'disabled' : ''}>
         <label class="field-label">পাসওয়ার্ড</label>
-        <input type="password" id="studLoginPass" placeholder="তোমার গোপন পাসওয়ার্ড" onkeydown="if(event.key==='Enter') submitStudentLogin()">
-        <button class="btn btn-primary btn-block" style="margin-top:6px;" onclick="submitStudentLogin()">🚀 লগইন করে সোশ্যাল প্রোফাইলে যাও</button>
+        <input type="password" id="studLoginPass" placeholder="তোমার গোপন পাসওয়ার্ড" onkeydown="if(event.key==='Enter') submitStudentLogin()" ${isLocked ? 'disabled' : ''}>
+        <button class="btn btn-primary btn-block" style="margin-top:6px;" onclick="submitStudentLogin()" ${isLocked ? 'disabled' : ''}>🚀 লগইন করে সোশ্যাল প্রোফাইলে যাও</button>
         <p class="hint center" style="margin-top:16px;">অ্যাকাউন্ট নেই? <a class="link-back" onclick="studentAuthTab='register'; renderStudentAuth();">যে কেউ বিনামূল্যে অ্যাকাউন্ট খোলো</a></p>
       ` : `
         <h2>নতুন অ্যাকাউন্ট ও প্রোফাইল তৈরি</h2>
@@ -64,7 +203,7 @@ function renderStudentAuth(){
         <label class="field-label">ইউজারনেম / হ্যান্ডেল (@slug) *</label>
         <input type="text" id="regSlug" placeholder="যেমন: rahim26 (স্পেস ছাড়া)">
         
-        <label class="field-label">পাসওয়ার্ড *</label>
+        <label class="field-label">পাসওয়ার্ড * (SHA-256 সল্টেড এনক্রিপশন সংরক্ষিত)</label>
         <input type="password" id="regPass" placeholder="কমপক্ষে ৪ অক্ষরের পাসওয়ার্ড">
 
         <label class="field-label">কলেজ / শিক্ষাপ্রতিষ্ঠানের নাম</label>
@@ -105,13 +244,48 @@ function renderStudentAuth(){
 window.submitStudentLogin = async function(){
   const slugInput = ((document.getElementById('studLoginSlug')||{}).value||'').trim();
   const passInput = ((document.getElementById('studLoginPass')||{}).value||'').trim();
+  const honeypotVal = ((document.getElementById('studSecTrapField')||{}).value||'').trim();
+
   if(!slugInput || !passInput){ toast('ইউজারনেম ও পাসওয়ার্ড দুটোই দিন'); return; }
+
+  // 1. Intrusion Defense: Detect hacking probes, bot scanner, or honeypot trap field
+  if(isSuspiciousHackingAttempt(slugInput, passInput, honeypotVal)){
+    recordFailedLoginAttempt();
+    renderDecoyHoneypotSandbox(slugInput);
+    return;
+  }
+
+  // 2. Brute-force Lockout Verification
+  const rateLimit = getAuthRateLimitState();
+  if(rateLimit.lockedUntil && Date.now() < rateLimit.lockedUntil){
+    const remainingSec = Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000);
+    toast(`🚨 সাময়িক ব্রুট-ফোর্স লকআউট! অনুগ্রহ করে ${remainingSec} সেকেন্ড অপেক্ষা করুন`);
+    renderStudentAuth();
+    return;
+  }
+
   const slug = slugify(slugInput);
-  toast('যাচাই করা হচ্ছে...');
+  toast('নিরাপদ যাচাই চলছে...');
+
+  // Compute salted SHA-256 hash for secure matching
+  const enteredHash = await hashPasswordWithSalt(passInput);
 
   // Check local profile first (for open/social students)
   const localProfile = getUserProfile(slug);
-  if(localProfile && localProfile.password && localProfile.password === passInput){
+  const isLocalPassMatch = localProfile && (
+    (localProfile.passwordHash && localProfile.passwordHash === enteredHash) ||
+    (localProfile.password && localProfile.password === passInput)
+  );
+
+  if(isLocalPassMatch){
+    resetFailedLoginAttempts();
+    // Upgrade legacy plain password to salted hash
+    if(localProfile.password && !localProfile.passwordHash){
+      localProfile.passwordHash = enteredHash;
+      delete localProfile.password;
+      saveUserProfile(localProfile);
+    }
+
     setLoggedStudent({
       slug: localProfile.slug,
       name: localProfile.name,
@@ -131,12 +305,14 @@ window.submitStudentLogin = async function(){
   // Also query Google Apps Script / Teacher backend
   const res = await postToScript('studentLogin', { slug, password: passInput });
   if(res && res.status === 'success'){
+    resetFailedLoginAttempts();
     const isPrivate = true;
     const isVerified = true;
     const studData = { 
       slug: res.slug||slug, 
       name: res.name||slugInput, 
       studentCode: res.studentCode||'',
+      passwordHash: enteredHash,
       isPrivateStudent: isPrivate,
       isVerified: isVerified,
       avatar: (localProfile && localProfile.avatar) || '🎓',
@@ -149,13 +325,20 @@ window.submitStudentLogin = async function(){
     playSfx('combo');
     go('studentDashboard');
   } else if(res && res.message === 'wrong_password'){
-    toast('❌ ভুল পাসওয়ার্ড! আবার চেষ্টা করুন');
+    const state = recordFailedLoginAttempt();
+    if(state.failedCount >= 5){
+      toast('🚨 একাধিকবার ভুল পাসওয়ার্ডের কারণে লকআউট সক্রিয় হয়েছে!');
+      renderStudentAuth();
+      return;
+    }
+    toast(`❌ ভুল পাসওয়ার্ড! (ব্যর্থ চেষ্টা: ${state.failedCount}/৫)`);
     playSfx('wrong');
   } else if(res && res.message === 'not_registered'){
     // Fallback: Check if user exists in Firestore
     if(typeof fbGetUserProfile === 'function'){
       const cloudProf = await fbGetUserProfile(slug);
-      if(cloudProf && cloudProf.password === passInput){
+      if(cloudProf && ((cloudProf.passwordHash && cloudProf.passwordHash === enteredHash) || (cloudProf.password && cloudProf.password === passInput))){
+        resetFailedLoginAttempts();
         setLoggedStudent(cloudProf);
         saveUserProfile(cloudProf);
         toast(`স্বাগতম, ${cloudProf.name}!`);
@@ -163,16 +346,23 @@ window.submitStudentLogin = async function(){
         return;
       }
     }
+    recordFailedLoginAttempt();
     toast('❌ এই ইউজারনেমে কোনো অ্যাকাউন্ট নেই! আগে সাইন আপ করুন');
     playSfx('wrong');
   } else {
     // If backend offline, check if password matched in local storage
-    if(localProfile && (!localProfile.password || localProfile.password === passInput)){
+    if(localProfile && isLocalPassMatch){
+      resetFailedLoginAttempts();
       setLoggedStudent(localProfile);
       toast(`অফলাইন লগইন সফল: ${localProfile.name}`);
       go('studentDashboard');
     } else {
-      toast('লগইন ব্যর্থ হয়েছে! ইন্টারনেট কানেকশন বা তথ্য চেক করুন');
+      const state = recordFailedLoginAttempt();
+      if(state.failedCount >= 5){
+        renderStudentAuth();
+        return;
+      }
+      toast('লগইন ব্যর্থ হয়েছে! সঠিক তথ্য দিয়ে আবার চেষ্টা করুন');
     }
   }
 };
@@ -198,6 +388,9 @@ window.submitStudentRegister = async function(){
   const slug = slugify(slugInput);
   toast('অ্যাকাউন্ট তৈরি হচ্ছে...');
 
+  // Compute salted SHA-256 hash for secure storage
+  const passwordHash = await hashPasswordWithSalt(pass);
+
   // If registering with private code, try server validation
   if(regAccountType === 'private' && regCode){
     const res = await postToScript('studentSignUp', { name, slug, password: pass, regCode });
@@ -205,7 +398,7 @@ window.submitStudentRegister = async function(){
       const profile = {
         slug,
         name,
-        password: pass,
+        passwordHash, // Cryptographically salted SHA-256 hash
         studentCode: res.studentCode || ('PRV-' + Math.floor(1000 + Math.random()*9000)),
         isPrivateStudent: true,
         isVerified: true,
@@ -242,7 +435,7 @@ window.submitStudentRegister = async function(){
   const newProfile = {
     slug,
     name,
-    password: pass,
+    passwordHash, // Cryptographically salted SHA-256 hash
     studentCode: isPrivate ? ('PRV-' + Math.floor(1000 + Math.random()*9000)) : ('STU-' + Math.floor(1000 + Math.random()*9000)),
     isPrivateStudent: isPrivate,
     isVerified: isVerified,

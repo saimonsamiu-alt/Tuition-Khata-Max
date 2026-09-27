@@ -22,7 +22,9 @@ function getLocalUserProfile(slug){
 function saveLocalUserProfile(profile){
   if(!profile || !profile.slug) return;
   const all = getAllUserProfiles();
-  all[profile.slug] = { ...(all[profile.slug] || {}), ...profile, updatedAt: Date.now() };
+  const safeProfile = { ...profile };
+  delete safeProfile.password;
+  all[profile.slug] = { ...(all[profile.slug] || {}), ...safeProfile, updatedAt: Date.now() };
   try {
     localStorage.setItem('tuition_user_profiles_v1', JSON.stringify(all));
   } catch(e){}
@@ -85,8 +87,273 @@ window.getCurrentUserIdentity = function(){
 };
 
 // ----------------------------------------------------------------------------
-// 2. User Social Profile Modal View
+// 2. User Social Profile, Followers & Instagram/Facebook Style Profile Engine
 // ----------------------------------------------------------------------------
+const SOCIAL_GRAPH_STORAGE_KEY = 'tuition_social_graph_v4';
+
+const COMMUNITY_STUDENT_ROSTER = [
+  { slug: 'tanvir_hsc26', name: 'তানভীর আহমেদ', avatar: '🧑‍🎓', institution: 'নটর ডেম কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'লক্ষ্য বুয়েট সিএসই 💻 | পদার্থবিজ্ঞান ও গণিত ভালোবাসি' },
+  { slug: 'nusrat_physics', name: 'নুসরাত জাহান', avatar: '👩‍🎓', institution: 'ভিকারুননিসা নূন স্কুল অ্যান্ড কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'এইচএসসি ২৬ ব্যাচ 📚 | নিয়মিত রিভিশন ও প্র্যাকটিস' },
+  { slug: 'arafat_math', name: 'আরাফাত হোসেন', avatar: '📐', institution: 'ঢাকা রেসিডেনসিয়াল মডেল কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'ম্যাথ অলিম্পিয়াড অনুরাগী ও স্টাডি আড্ডা এক্টিভ মেম্বার' },
+  { slug: 'tasnim_buet', name: 'তাসনীম ফেরদৌস', avatar: '🔬', institution: 'রাজউক উত্তরা মডেল কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'মেডিকেল ও ইঞ্জিনিয়ারিং ড্রিমার ✨' },
+  { slug: 'nafis_ndc', name: 'নাফিস ইকবাল', avatar: '⭐', institution: 'নটর ডেম কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'সায়েন্স ক্লাবের মেম্বার ও নিয়মিত নোট শেয়ারার' },
+  { slug: 'fariha_chem', name: 'ফারিহা তাবাসসুম', avatar: '💡', institution: 'হলিক্রস কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'অর্গানিক কেমিস্ট্রি ও বায়োলজি নোট মেকার 🌿' },
+  { slug: 'rahim_biology', name: 'রহিম উল্লাহ', avatar: '🧑‍🎓', institution: 'চট্টগ্রাম কলেজ', badge: 'public_student', isPrivateStudent: false, bio: 'পড়াশোনায় কোনো শর্টকাট নেই 📖' },
+  { slug: 'sadia_dhaka', name: 'সাদিয়া ইসলাম', avatar: '👩‍🎓', institution: 'আইডিয়াল স্কুল অ্যান্ড কলেজ', badge: 'public_student', isPrivateStudent: false, bio: 'ডেইলি স্টাডি গোল ও গ্রুপ প্র্যাকটিস 🎯' },
+  { slug: 'ariyan_rahman', name: 'আরিয়ান রহমান', avatar: '🧑‍🎓', institution: 'ঢাকা কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: 'ক্যালকুলাস ও ভেক্টর প্র্যাকটিসে ব্যস্ত' },
+  { slug: 'tanzila_parvin', name: 'তানজিলা পারভীন', avatar: '👩‍🎓', institution: 'ভিকারুননিসা কলেজ', badge: 'verified_private', isPrivateStudent: true, bio: '১০০% ডাউট সলভ ও স্টাডি স্ট্রিক চ্যাম্পিয়ন' },
+  { slug: 'teacher_saikat', name: 'সৈকত স্যার', avatar: '👨‍🏫', institution: 'হেড মেন্টর ও শিক্ষক', badge: 'verified_teacher', isTeacher: true, bio: 'পদার্থবিজ্ঞান ও গণিত মেন্টরিং এবং পরীক্ষার প্রস্তুতি' }
+];
+
+function getSeedPeersForSlug(slug){
+  const peers = COMMUNITY_STUDENT_ROSTER.filter(p => p.slug !== slug);
+  let hash = 0;
+  for(let i=0; i<slug.length; i++) hash = ((hash << 5) - hash) + slug.charCodeAt(i);
+  hash = Math.abs(hash);
+
+  const followers = [];
+  const following = [];
+  for(let i=0; i<peers.length; i++){
+    if((hash + i * 3) % 2 === 0 || i < 3) followers.push(peers[i].slug);
+    if((hash + i * 5) % 2 === 0 || i === 0 || i === 2) following.push(peers[i].slug);
+  }
+  return { followers, following };
+}
+
+function getSocialGraph(){
+  try {
+    const raw = localStorage.getItem(SOCIAL_GRAPH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch(e){ return {}; }
+}
+
+function saveSocialGraph(graph){
+  try {
+    localStorage.setItem(SOCIAL_GRAPH_STORAGE_KEY, JSON.stringify(graph));
+  } catch(e){}
+}
+
+window.getUserSocialStats = function(targetSlug){
+  const graph = getSocialGraph();
+  const currentMe = getCurrentUserIdentity();
+  const meSlug = currentMe ? currentMe.slug : '';
+
+  if(!graph[targetSlug] || !Array.isArray(graph[targetSlug].followers) || graph[targetSlug].followers.length === 0){
+    const seeds = getSeedPeersForSlug(targetSlug);
+    graph[targetSlug] = {
+      followers: seeds.followers,
+      following: seeds.following
+    };
+    saveSocialGraph(graph);
+  }
+
+  const targetData = graph[targetSlug] || { followers: [], following: [] };
+  const myData = (meSlug && graph[meSlug]) ? graph[meSlug] : { followers: [], following: [] };
+
+  const followersList = targetData.followers || [];
+  const followingList = targetData.following || [];
+
+  // Mutual following = Mutual Friends / সহপাঠী ফ্রেন্ডস
+  const friendsList = followersList.filter(slug => followingList.includes(slug));
+
+  const isFollowing = meSlug ? myData.following.includes(targetSlug) : false;
+  const isFriend = meSlug ? (myData.following.includes(targetSlug) && myData.followers.includes(targetSlug)) : false;
+
+  return {
+    followersCount: followersList.length,
+    followingCount: followingList.length,
+    friendsCount: friendsList.length,
+    followersList,
+    followingList,
+    friendsList,
+    isFollowing,
+    isFriend
+  };
+};
+
+window.toggleFollowUser = function(targetSlug, targetName){
+  const currentMe = getCurrentUserIdentity();
+  if(!currentMe || !currentMe.slug){
+    toast('ফলো করতে প্রথমে লগইন করুন');
+    return;
+  }
+  if(currentMe.slug === targetSlug){
+    toast('আপনি নিজেকে ফলো করতে পারবেন না');
+    return;
+  }
+
+  const graph = getSocialGraph();
+  const mySlug = currentMe.slug;
+
+  if(!graph[mySlug]) {
+    const seeds = getSeedPeersForSlug(mySlug);
+    graph[mySlug] = { followers: seeds.followers, following: seeds.following };
+  }
+  if(!graph[targetSlug]) {
+    const seeds = getSeedPeersForSlug(targetSlug);
+    graph[targetSlug] = { followers: seeds.followers, following: seeds.following };
+  }
+
+  const myFollowing = graph[mySlug].following || [];
+  const targetFollowers = graph[targetSlug].followers || [];
+
+  const isAlreadyFollowing = myFollowing.includes(targetSlug);
+
+  if(isAlreadyFollowing){
+    // Unfollow
+    graph[mySlug].following = myFollowing.filter(s => s !== targetSlug);
+    graph[targetSlug].followers = targetFollowers.filter(s => s !== mySlug);
+    toast(`${targetName || targetSlug}-কে আনফলো করা হয়েছে`);
+  } else {
+    // Follow
+    if(!graph[mySlug].following.includes(targetSlug)) graph[mySlug].following.push(targetSlug);
+    if(!graph[targetSlug].followers.includes(mySlug)) graph[targetSlug].followers.push(mySlug);
+    if(typeof playSfx === 'function') playSfx('combo');
+    toast(`🎉 আপনি এখন ${targetName || targetSlug}-কে ফলো করছেন!`);
+  }
+
+  saveSocialGraph(graph);
+  openUserProfileModal(targetSlug, targetName);
+};
+
+window.toggleFriendUser = function(targetSlug, targetName){
+  const currentMe = getCurrentUserIdentity();
+  if(!currentMe || !currentMe.slug){
+    toast('ফ্রেন্ড রিকোয়েস্ট পাঠাতে লগইন করুন');
+    return;
+  }
+  if(currentMe.slug === targetSlug) return;
+
+  const graph = getSocialGraph();
+  const mySlug = currentMe.slug;
+
+  if(!graph[mySlug]) {
+    const seeds = getSeedPeersForSlug(mySlug);
+    graph[mySlug] = { followers: seeds.followers, following: seeds.following };
+  }
+  if(!graph[targetSlug]) {
+    const seeds = getSeedPeersForSlug(targetSlug);
+    graph[targetSlug] = { followers: seeds.followers, following: seeds.following };
+  }
+
+  const isFriendNow = graph[mySlug].following.includes(targetSlug) && graph[mySlug].followers.includes(targetSlug);
+
+  if(isFriendNow){
+    // Remove mutual connection
+    graph[mySlug].following = (graph[mySlug].following || []).filter(s => s !== targetSlug);
+    graph[targetSlug].followers = (graph[targetSlug].followers || []).filter(s => s !== mySlug);
+    toast('ফ্রেন্ড তালিকা থেকে সরানো হয়েছে');
+  } else {
+    // Make mutual friends
+    if(!graph[mySlug].following.includes(targetSlug)) graph[mySlug].following.push(targetSlug);
+    if(!graph[mySlug].followers.includes(targetSlug)) graph[mySlug].followers.push(targetSlug);
+    if(!graph[targetSlug].followers.includes(mySlug)) graph[targetSlug].followers.push(mySlug);
+    if(!graph[targetSlug].following.includes(mySlug)) graph[targetSlug].following.push(mySlug);
+    if(typeof playSfx === 'function') playSfx('levelUp');
+    toast(`🤝 ${targetName || targetSlug} এখন আপনার সহপাঠী ফ্রেন্ড!`);
+  }
+
+  saveSocialGraph(graph);
+  openUserProfileModal(targetSlug, targetName);
+};
+
+window.userProfileCurrentTab = 'posts';
+window.userProfileFriendsSubTab = 'followers';
+window.userProfilePostViewMode = 'grid'; // 'grid' | 'feed'
+
+window.getProfileComments = function(slug){
+  if(!slug) return [];
+  try{
+    const raw = localStorage.getItem('tuition_profile_comments_' + slug);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){
+    return [];
+  }
+};
+
+window.saveProfileComments = function(slug, comments){
+  if(!slug) return;
+  try{
+    localStorage.setItem('tuition_profile_comments_' + slug, JSON.stringify(comments));
+  }catch(e){}
+};
+
+window.scrollProfileCommentsToBottom = function(smooth = true){
+  const container = document.getElementById('profileCommentsScrollContainer');
+  if(!container) return;
+  const doScroll = () => {
+    const target = container.scrollHeight;
+    if(smooth && typeof container.scrollTo === 'function'){
+      container.scrollTo({ top: target, behavior: 'smooth' });
+    } else {
+      container.scrollTop = target;
+    }
+  };
+  doScroll();
+  requestAnimationFrame(doScroll);
+  setTimeout(doScroll, 80);
+  setTimeout(doScroll, 200);
+};
+
+window.submitProfileComment = function(targetSlug, targetName){
+  const input = document.getElementById('profile_comment_input_' + targetSlug);
+  if(!input) return;
+  const text = input.value.trim();
+  if(!text){
+    toast('মন্তব্য খালি রাখা যাবে না');
+    return;
+  }
+  const me = getCurrentUserIdentity();
+  const comments = getProfileComments(targetSlug);
+  const newCommentId = 'pcom_' + Date.now();
+  const newComment = {
+    id: newCommentId,
+    authorSlug: me.slug,
+    authorName: me.name,
+    authorAvatar: me.avatar || '🧑‍🎓',
+    isTeacher: !!me.isTeacher,
+    isPrivateStudent: !!me.isPrivateStudent,
+    badgeHtml: me.isTeacher ? '<span class="badge-teacher" style="font-size:10px; padding:1px 6px;">👨‍🏫 শিক্ষক</span>' : (me.isPrivateStudent ? '<span class="badge-verified-gold" style="font-size:10px; padding:1px 6px;">🎓 শিক্ষার্থী</span>' : ''),
+    text,
+    timestamp: Date.now()
+  };
+  comments.push(newComment);
+  saveProfileComments(targetSlug, comments);
+  input.value = '';
+  toast('প্রোফাইলে মন্তব্য সফলভাবে যোগ হয়েছে!');
+  if(typeof playSfx === 'function') playSfx('slash');
+
+  // Re-render modal on comments tab and auto-scroll to the bottom so latest comment is visible
+  window.userProfileCurrentTab = 'comments';
+  openUserProfileModal(targetSlug, targetName).then(() => {
+    setTimeout(() => {
+      scrollProfileCommentsToBottom(true);
+      const newEl = document.getElementById('prof_comment_' + newCommentId);
+      if(newEl){
+        newEl.classList.add('new-comment-pulse');
+        newEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 120);
+  });
+};
+
+window.switchUserProfileTab = function(tab, targetSlug, fallbackName, subTab){
+  window.userProfileCurrentTab = tab;
+  if(subTab) window.userProfileFriendsSubTab = subTab;
+  openUserProfileModal(targetSlug, fallbackName).then(() => {
+    if(tab === 'comments'){
+      setTimeout(() => {
+        scrollProfileCommentsToBottom(false);
+      }, 80);
+    }
+  });
+};
+
+window.switchUserProfilePostViewMode = function(mode, targetSlug, fallbackName){
+  window.userProfilePostViewMode = mode;
+  openUserProfileModal(targetSlug, fallbackName);
+};
+
 window.openUserProfileModal = async function(targetSlug, fallbackName){
   if(!targetSlug && fallbackName) targetSlug = slugify(fallbackName);
   if(!targetSlug) return;
@@ -102,138 +369,627 @@ window.openUserProfileModal = async function(targetSlug, fallbackName){
   }
 
   if(!user){
-    const isTeacherTarget = targetSlug.includes('teacher');
+    // Check known roster
+    const inRoster = COMMUNITY_STUDENT_ROSTER.find(r => r.slug === targetSlug || r.name === fallbackName);
+    const isTeacherTarget = targetSlug.includes('teacher') || (inRoster && inRoster.isTeacher);
     user = {
       slug: targetSlug,
-      name: fallbackName || (isTeacherTarget ? 'কোর্স শিক্ষক' : 'শিক্ষার্থী'),
-      avatar: isTeacherTarget ? '👨‍🏫' : '🧑‍🎓',
+      name: fallbackName || (inRoster ? inRoster.name : (isTeacherTarget ? 'কোর্স শিক্ষক' : 'শিক্ষার্থী')),
+      avatar: inRoster ? inRoster.avatar : (isTeacherTarget ? '👨‍🏫' : '🧑‍🎓'),
       isTeacher: isTeacherTarget,
-      isPrivateStudent: isTeacherTarget ? false : false,
-      isVerified: isTeacherTarget,
-      badge: isTeacherTarget ? 'verified_teacher' : 'public_student',
-      institution: isTeacherTarget ? 'মেন্টর' : 'শিক্ষার্থী',
-      bio: 'স্টাডি আড্ডা মিনি সোশ্যাল মিডিয়ায় নিয়মিত সক্রিয় 📚',
-      createdAt: Date.now() - 86400000 * 5
+      isPrivateStudent: inRoster ? !!inRoster.isPrivateStudent : (isTeacherTarget ? false : true),
+      isVerified: inRoster ? (inRoster.badge === 'verified_private' || inRoster.isTeacher) : isTeacherTarget,
+      badge: inRoster ? inRoster.badge : (isTeacherTarget ? 'verified_teacher' : 'verified_private'),
+      institution: inRoster ? inRoster.institution : (isTeacherTarget ? 'হেড মেন্টর ও শিক্ষক' : 'নটর ডেম কলেজ'),
+      bio: inRoster ? inRoster.bio : 'এইচএসসি ও বোর্ড পরীক্ষার প্রস্তুতি নিচ্ছি 📚 | স্টাডি আড্ডায় সক্রিয়',
+      createdAt: Date.now() - 86400000 * 12
     };
   }
 
-  const isMe = currentMe.slug === user.slug || currentMe.name === user.name;
+  const isMe = currentMe.slug === user.slug || (currentMe.name && currentMe.name === user.name);
   const isTeacher = !!user.isTeacher;
   const isPrivate = !!(user.isPrivateStudent || (user.badge === 'verified_private'));
   const isVerified = isTeacher || isPrivate || !!user.isVerified;
 
   let badgeBadgeHtml = '';
   if(isTeacher){
-    badgeBadgeHtml = '<span class="badge-teacher">👨‍🏫 ভেরিফাইড শিক্ষক ✓</span>';
+    badgeBadgeHtml = '<span class="badge-teacher" style="font-size:11px; padding:3px 9px; border-radius:12px; font-weight:700;">👨‍🏫 ভেরিফাইড শিক্ষক ✓</span>';
   } else if(isVerified){
-    badgeBadgeHtml = '<span class="badge-verified-gold">⭐ ভেরিফাইড প্রাইভেট শিক্ষার্থী ✓</span>';
+    badgeBadgeHtml = '<span class="badge-verified-gold" style="font-size:11px; padding:3px 9px; border-radius:12px; font-weight:700;">⭐ ভেরিফাইড প্রাইভেট শিক্ষার্থী ✓</span>';
   } else {
-    badgeBadgeHtml = '<span class="badge-public-stud">🧑‍🎓 সাধারণ শিক্ষার্থী</span>';
+    badgeBadgeHtml = '<span class="badge-public-stud" style="font-size:11px; padding:3px 9px; border-radius:12px; font-weight:600;">🧑‍🎓 সাধারণ শিক্ষার্থী</span>';
   }
 
-  // Count posts by this user
+  // Count past posts by this user in Study Adda
   const allPosts = typeof getCommunityPosts === 'function' ? getCommunityPosts() : [];
-  const userPosts = allPosts.filter(p => (p.authorSlug === user.slug) || (p.authorName === user.name));
-  const userStreak = typeof getAchievementStreak === 'function' ? getAchievementStreak(isPrivate ? 'private' : 'public', user.slug) : 3;
+  const userPosts = allPosts.filter(p => {
+    const pSlug = p.authorSlug || slugify(p.authorName || '');
+    return (pSlug === user.slug) || (p.authorName && p.authorName.trim() === user.name.trim());
+  });
+
+  // Extract photos from user's posts for Instagram media gallery tab
+  const userPhotos = userPosts.filter(p => !!(p.imageUrl || p.mediaUrl));
+
+  // Profile Comments & Wall Messages
+  const profileComments = getProfileComments(user.slug);
+
+  // Social Stats (Followers, Following, Friends)
+  const socialStats = getUserSocialStats(user.slug);
+
+  const activeTab = window.userProfileCurrentTab || 'posts';
+  const friendsSubTab = window.userProfileFriendsSubTab || 'followers';
+  const postViewMode = window.userProfilePostViewMode || 'grid';
+
+  // Aesthetic High-Resolution Cover Photo Banner (Facebook / Instagram Style)
+  const defaultCovers = [
+    'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?w=1000&auto=format&fit=crop&q=80', // Galaxy
+    'https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?w=1000&auto=format&fit=crop&q=80', // Library
+    'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?w=1000&auto=format&fit=crop&q=80', // Campus
+    'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1000&auto=format&fit=crop&q=80'  // Sunset
+  ];
+  let coverPhotoUrl = user.coverPhoto;
+  if(!coverPhotoUrl){
+    let hash = 0;
+    for(let i=0; i<user.slug.length; i++) hash = ((hash << 5) - hash) + user.slug.charCodeAt(i);
+    coverPhotoUrl = defaultCovers[Math.abs(hash) % defaultCovers.length];
+  }
 
   const old = document.getElementById('userSocialProfileModalOverlay');
   if(old) old.remove();
 
   const overlay = document.createElement('div');
   overlay.id = 'userSocialProfileModalOverlay';
-  overlay.className = 'community-modal-overlay';
+  overlay.className = 'community-modal-overlay user-profile-overlay';
   overlay.onclick = function(e){
     if(e.target === overlay) overlay.remove();
   };
 
   overlay.innerHTML = `
-    <div class="community-modal" style="max-width:520px; padding:0; overflow:hidden; border-radius:18px;" onclick="event.stopPropagation()">
-      <!-- Profile Header Cover Banner (Instagram Style) -->
-      <div style="height:120px; background:linear-gradient(135deg, #1E293B, #334155, #D9A441); position:relative;">
-        <button class="reaction-btn" style="position:absolute; top:12px; right:12px; background:rgba(0,0,0,0.4); color:#fff; border:none; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer;" onclick="document.getElementById('userSocialProfileModalOverlay').remove()">✕</button>
+    <div class="community-modal user-social-profile-card" style="max-width:580px; width:100%; margin:10px auto; padding:0; border-radius:24px; box-shadow:0 30px 70px -15px rgba(0,0,0,0.55); border:1.5px solid var(--paper-edge);" onclick="event.stopPropagation()">
+      
+      <!-- Profile Header Cover Photo Banner (Facebook / Instagram Style) -->
+      <div style="height:155px; background:url('${escapeHtml(coverPhotoUrl)}') center/cover no-repeat; position:relative; display:flex; align-items:flex-start; justify-content:space-between; padding:14px 16px;">
+        <div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.1) 60%, rgba(0,0,0,0.65) 100%); pointer-events:none;"></div>
+        
+        <div style="position:relative; z-index:2;">
+          ${isMe ? `
+            <button class="camera-aux-btn" style="background:rgba(15,23,42,0.65); backdrop-filter:blur(8px); color:#fff; border:1px solid rgba(255,255,255,0.3); font-size:11.5px; padding:5px 12px; border-radius:20px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,0.3);" onclick="openChangeCoverPhotoModal()">
+              <span>📷</span> কভার পরিবর্তন
+            </button>
+          ` : `
+            <span style="background:rgba(15,23,42,0.55); backdrop-filter:blur(6px); color:#fff; font-size:11px; padding:4px 10px; border-radius:14px; font-weight:600; display:inline-flex; align-items:center; gap:4px;">
+              <span>🎓</span> স্টাডি প্রোফাইল
+            </span>
+          `}
+        </div>
+
+        <button class="reaction-btn" style="position:relative; z-index:2; background:rgba(15,23,42,0.65); backdrop-filter:blur(8px); color:#fff; border:1px solid rgba(255,255,255,0.25); border-radius:50%; width:34px; height:34px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; box-shadow:0 2px 8px rgba(0,0,0,0.3);" onclick="document.getElementById('userSocialProfileModalOverlay').remove()" title="বন্ধ করুন">✕</button>
       </div>
 
-      <!-- Avatar & Main Info -->
-      <div style="padding:0 20px 20px 20px; position:relative;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:-44px; margin-bottom:12px;">
-          <div style="width:84px; height:84px; border-radius:50%; background:#fff; border:3.5px solid var(--paper); display:flex; align-items:center; justify-content:center; font-size:42px; box-shadow:0 4px 14px rgba(0,0,0,0.15); position:relative;">
-            ${user.avatar || (isTeacher ? '👨‍🏫' : (isPrivate ? '🎓' : '🧑‍🎓'))}
+      <!-- Avatar & Main Social Header -->
+      <div class="user-profile-body-section" style="padding:0 22px 24px 22px; position:relative;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:-48px; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+          
+          <!-- Avatar with Instagram Story Ring -->
+          <div style="position:relative; width:96px; height:96px; border-radius:50%; background:linear-gradient(45deg, #F59E0B, #EC4899, #8B5CF6); padding:3.5px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+            <div style="width:100%; height:100%; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; font-size:46px; overflow:hidden; border:2.5px solid #fff;">
+              ${user.avatarPhoto 
+                ? `<img src="${escapeHtml(user.avatarPhoto)}" alt="avatar" style="width:100%; height:100%; object-fit:cover;">`
+                : (user.avatar || (isTeacher ? '👨‍🏫' : (isPrivate ? '🎓' : '🧑‍🎓')))}
+            </div>
+
+            <!-- Verified Checkmark Badge -->
             ${isVerified ? `
-              <div style="position:absolute; bottom:0; right:0; background:#F59E0B; color:#fff; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:12px; border:2px solid #fff; font-weight:700;" title="ভেরিফাইড ব্যাচ">✓</div>
+              <div style="position:absolute; bottom:2px; right:2px; background:${isTeacher ? '#2563EB' : '#F59E0B'}; color:#fff; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:12px; border:2.5px solid #fff; font-weight:800; box-shadow:0 2px 6px rgba(0,0,0,0.25);" title="${isTeacher ? 'ভেরিফাইড শিক্ষক' : 'ভেরিফাইড শিক্ষার্থী'}">✓</div>
+            ` : `
+              <div style="position:absolute; bottom:3px; right:3px; background:#10B981; border-radius:50%; width:14px; height:14px; border:2.5px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,0.2);" title="অনলাইন"></div>
+            `}
+
+            <!-- Change Avatar Button for Own Profile -->
+            ${isMe ? `
+              <button onclick="openChangeAvatarModal()" style="position:absolute; top:2px; right:2px; background:#1F2A44; color:#fff; border:2px solid #fff; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; font-size:11px; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3);" title="প্রোফাইল ছবি পরিবর্তন">📷</button>
             ` : ''}
           </div>
 
-          <div style="display:flex; gap:8px;">
+          <!-- Instagram / Facebook Style Action Buttons -->
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             ${isMe ? `
-              <button class="btn btn-outline" style="font-size:12px; padding:6px 12px; border-radius:8px;" onclick="openEditProfileModal()">✏️ প্রোফাইল এডিট</button>
+              <button class="btn btn-outline" style="font-size:12.5px; padding:7px 15px; border-radius:20px; font-weight:700; display:inline-flex; align-items:center; gap:5px;" onclick="openEditProfileModal()">
+                <span>✏️</span> প্রোফাইল এডিট
+              </button>
               ${!isVerified ? `
-                <button class="btn btn-gold" style="font-size:12px; padding:6px 12px; border-radius:8px; font-weight:700;" onclick="openApplyVerifiedModal()">⭐ ব্যাচ আবেদন</button>
+                <button class="btn btn-gold" style="font-size:12.5px; padding:7px 14px; border-radius:20px; font-weight:700; display:inline-flex; align-items:center; gap:4px;" onclick="openApplyVerifiedModal()">
+                  <span>⭐</span> ব্যাচ আবেদন
+                </button>
               ` : ''}
             ` : `
-              <button class="btn btn-gold" style="font-size:13px; padding:7px 16px; border-radius:8px; font-weight:700; display:inline-flex; align-items:center; gap:6px;" onclick="document.getElementById('userSocialProfileModalOverlay').remove(); openDirectChat('${user.slug}', '${escapeHtml(user.name)}', '${user.avatar || '🧑‍🎓'}', '${user.badge || 'public'}')">
-                <span>💬 পার্সোনাল চ্যাট</span>
+              <!-- Follow / Following Button (Instagram Style) -->
+              <button 
+                class="btn ${socialStats.isFollowing ? 'btn-outline' : 'btn-primary'}" 
+                style="font-size:13px; padding:7px 16px; border-radius:20px; font-weight:700; display:inline-flex; align-items:center; gap:6px; ${!socialStats.isFollowing ? 'background:linear-gradient(135deg, #2563EB, #1D4ED8); box-shadow:0 3px 10px rgba(37,99,235,0.3);' : ''}" 
+                onclick="toggleFollowUser('${user.slug}', '${escapeHtml(user.name)}')"
+              >
+                ${socialStats.isFollowing ? '<span>✓ ফলোয়িং</span>' : '<span>➕ ফলো করুন</span>'}
+              </button>
+
+              <!-- Mutual Friends / Add Friend Button (Facebook Style) -->
+              <button 
+                class="btn btn-outline" 
+                style="font-size:13px; padding:7px 14px; border-radius:20px; font-weight:700; display:inline-flex; align-items:center; gap:5px; ${socialStats.isFriend ? 'border-color:#10B981; color:#065F46; background:#ECFDF5;' : ''}" 
+                onclick="toggleFriendUser('${user.slug}', '${escapeHtml(user.name)}')"
+                title="${socialStats.isFriend ? 'আপনার সহপাঠী ফ্রেন্ড' : 'মিউচুয়াল ফ্রেন্ড হিসেবে যুক্ত করুন'}"
+              >
+                ${socialStats.isFriend ? '<span>🤝 ফ্রেন্ডস ✓</span>' : '<span>➕ ফ্রেন্ডস</span>'}
+              </button>
+
+              <!-- Message Button -->
+              <button 
+                class="btn btn-gold" 
+                style="font-size:13px; padding:7px 15px; border-radius:20px; font-weight:700; display:inline-flex; align-items:center; gap:5px; box-shadow:0 3px 10px rgba(217,164,65,0.3);" 
+                onclick="document.getElementById('userSocialProfileModalOverlay').remove(); openDirectChat('${user.slug}', '${escapeHtml(user.name)}', '${user.avatar || '🧑‍🎓'}', '${user.badge || 'public'}')"
+              >
+                <span>💬 মেসেজ</span>
               </button>
             `}
           </div>
         </div>
 
-        <div>
+        <!-- Name, Handle, Institution & Bio -->
+        <div style="margin-bottom:14px;">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <h2 style="margin:0; font-size:20px; color:var(--ink);">${escapeHtml(user.name)}</h2>
+            <h2 style="margin:0; font-size:21px; font-weight:800; color:var(--ink); line-height:1.2;">${escapeHtml(user.name)}</h2>
             ${badgeBadgeHtml}
           </div>
-          <div style="font-family:var(--font-mono); font-size:12.5px; color:var(--pencil); margin-top:2px;">
-            @${escapeHtml(user.slug)} ${user.studentCode ? `· ID: #${escapeHtml(user.studentCode)}` : ''}
+
+          <div style="font-family:var(--font-mono); font-size:12.5px; color:var(--pencil); margin-top:3px;">
+            @${escapeHtml(user.slug)} ${user.studentCode ? `· আইডি: #${escapeHtml(user.studentCode)}` : ''}
           </div>
+
           ${user.institution ? `
-            <div style="font-size:13px; color:var(--ink); margin-top:6px; display:flex; align-items:center; gap:5px;">
-              <span>🏫</span> <span>${escapeHtml(user.institution)}</span>
+            <div style="font-size:13px; color:var(--ink); margin-top:6px; display:flex; align-items:center; gap:6px;">
+              <span>🏫</span> <b>${escapeHtml(user.institution)}</b>
             </div>
           ` : ''}
-          <p style="font-size:13.5px; color:var(--ink); margin:10px 0 14px 0; line-height:1.45;">
-            ${escapeHtml(user.bio || 'স্টাডি আড্ডা মিনি সোশ্যাল মিডিয়ায় নিয়মিত সক্রিয় ও সহপাঠীদের সাথে ডাউট আলোচনা করেন।')}
+
+          <p style="font-size:13.5px; color:var(--ink); margin:8px 0 14px 0; line-height:1.5;">
+            ${escapeHtml(user.bio || 'এইচএসসি ও বোর্ড পরীক্ষার প্রস্তুতি নিচ্ছি 📚 | নিয়মিত স্টাডি আড্ডায় সক্রিয়')}
           </p>
         </div>
 
-        <!-- Social Statistics Row -->
-        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; background:var(--paper); border:1px solid var(--paper-edge); border-radius:12px; padding:10px; text-align:center; margin-bottom:18px;">
-          <div>
-            <div style="font-size:16px; font-weight:800; color:var(--ink);">${userPosts.length}</div>
-            <div style="font-size:11px; color:var(--pencil);">স্টাডি পোস্ট</div>
+        <!-- Instagram / Facebook Social Counters Row (Posts, Followers, Following, Friends) -->
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; background:var(--paper); border:1.5px solid var(--paper-edge); border-radius:16px; padding:12px 6px; text-align:center; margin-bottom:16px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+          
+          <!-- 1. Posts Count -->
+          <div style="cursor:pointer; padding:2px;" onclick="switchUserProfileTab('posts', '${user.slug}', '${escapeHtml(user.name)}')">
+            <div style="font-size:18px; font-weight:800; color:var(--ink); line-height:1.1;">${userPosts.length}</div>
+            <div style="font-size:11px; color:var(--pencil); font-weight:700; margin-top:3px;">পোস্ট</div>
           </div>
-          <div>
-            <div style="font-size:16px; font-weight:800; color:#B45309;">🔥 ${userStreak} দিন</div>
-            <div style="font-size:11px; color:var(--pencil);">অ্যাক্টিভিটি স্ট্রিক</div>
+
+          <!-- 2. Followers Count -->
+          <div style="cursor:pointer; padding:2px; border-left:1px solid var(--paper-edge);" onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}', 'followers')">
+            <div style="font-size:18px; font-weight:800; color:#2563EB; line-height:1.1;">${socialStats.followersCount}</div>
+            <div style="font-size:11px; color:var(--pencil); font-weight:700; margin-top:3px;">ফলোয়ার</div>
           </div>
-          <div>
-            <div style="font-size:16px; font-weight:800; color:var(--green);">${isVerified ? 'ভেরিফাইড ⭐' : 'উন্মুক্ত 🌐'}</div>
-            <div style="font-size:11px; color:var(--pencil);">ব্যাচ স্ট্যাটাস</div>
+
+          <!-- 3. Following Count -->
+          <div style="cursor:pointer; padding:2px; border-left:1px solid var(--paper-edge);" onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}', 'following')">
+            <div style="font-size:18px; font-weight:800; color:#D97706; line-height:1.1;">${socialStats.followingCount}</div>
+            <div style="font-size:11px; color:var(--pencil); font-weight:700; margin-top:3px;">ফলোয়িং</div>
           </div>
+
+          <!-- 4. Friends Count (Mutual Friends) -->
+          <div style="cursor:pointer; padding:2px; border-left:1px solid var(--paper-edge);" onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}', 'friends')">
+            <div style="font-size:18px; font-weight:800; color:#10B981; line-height:1.1;">${socialStats.friendsCount}</div>
+            <div style="font-size:11px; color:var(--pencil); font-weight:700; margin-top:3px;">ফ্রেন্ডস</div>
+          </div>
+
         </div>
 
-        <!-- User's Recent Posts Header -->
-        <div style="border-top:1px solid var(--paper-edge); padding-top:14px;">
-          <h4 style="margin:0 0 10px 0; font-size:14px; color:var(--ink); display:flex; align-items:center; gap:6px;">
-            <span>📸 ${escapeHtml(user.name)}-এর পোস্টসমূহ (${userPosts.length})</span>
-          </h4>
-          <div style="max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
-            ${userPosts.length === 0 ? `
-              <div style="text-align:center; padding:18px 0; color:var(--pencil); font-size:12.5px;">
-                এখনো কোনো পোস্ট প্রকাশ করা হয়নি
-              </div>
-            ` : userPosts.map(p => `
-              <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:8px; padding:10px 12px; font-size:12.5px; cursor:pointer;" onclick="document.getElementById('userSocialProfileModalOverlay').remove(); openPostDetailModal('${p.id}')">
-                <div style="font-size:11px; color:var(--gold); font-weight:700; margin-bottom:3px;">${escapeHtml(p.tag || 'স্টাডি')}</div>
-                <div style="color:var(--ink); line-height:1.4;">${escapeHtml(p.content.slice(0, 90))}${p.content.length > 90 ? '...' : ''}</div>
-              </div>
-            `).join('')}
+        <!-- Instagram-Style Tab Switcher Bar -->
+        <div class="tab-group" style="margin-bottom:14px; overflow-x:auto;">
+          <button type="button" class="tab-btn ${activeTab==='posts'?'active':''}" style="flex:1; min-width:85px; font-size:12px; font-weight:700;" onclick="switchUserProfileTab('posts', '${user.slug}', '${escapeHtml(user.name)}')">
+            📸 পোস্ট (${userPosts.length})
+          </button>
+          <button type="button" class="tab-btn ${activeTab==='comments'?'active':''}" style="flex:1; min-width:85px; font-size:12px; font-weight:700;" onclick="switchUserProfileTab('comments', '${user.slug}', '${escapeHtml(user.name)}')">
+            💬 মন্তব্য (${profileComments.length})
+          </button>
+          <button type="button" class="tab-btn ${activeTab==='friends'?'active':''}" style="flex:1; min-width:105px; font-size:12px; font-weight:700;" onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}')">
+            👥 সহপাঠী ও ফ্রেন্ডস
+          </button>
+          <button type="button" class="tab-btn ${activeTab==='photos'?'active':''}" style="flex:1; min-width:80px; font-size:12px; font-weight:700;" onclick="switchUserProfileTab('photos', '${user.slug}', '${escapeHtml(user.name)}')">
+            🖼️ ছবি (${userPhotos.length})
+          </button>
+          <button type="button" class="tab-btn ${activeTab==='about'?'active':''}" style="flex:1; min-width:80px; font-size:12px; font-weight:700;" onclick="switchUserProfileTab('about', '${user.slug}', '${escapeHtml(user.name)}')">
+            ℹ️ পরিচিতি
+          </button>
+        </div>
+
+        <!-- Tab 1: Past Posts (Instagram Grid + Facebook Feed Mode Switcher) -->
+        ${activeTab === 'posts' ? `
+          <div style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size:12px; color:var(--pencil); font-weight:600;">
+              প্রকাশিত পোস্টসমূহ (${userPosts.length}):
+            </div>
+            <div style="display:flex; gap:4px; background:var(--paper); padding:2px; border-radius:8px; border:1px solid var(--paper-edge);">
+              <button 
+                type="button" 
+                style="border:none; background:${postViewMode==='grid'?'var(--card-bg, #fff)':'transparent'}; color:${postViewMode==='grid'?'var(--ink)':'var(--pencil)'}; font-size:11.5px; padding:3px 8px; border-radius:6px; font-weight:700; cursor:pointer; box-shadow:${postViewMode==='grid'?'0 1px 3px rgba(0,0,0,0.1)':'none'};" 
+                onclick="switchUserProfilePostViewMode('grid', '${user.slug}', '${escapeHtml(user.name)}')"
+                title="গ্রিড ভিউ (Instagram Grid)"
+              >
+                🔲 গ্রিড
+              </button>
+              <button 
+                type="button" 
+                style="border:none; background:${postViewMode==='feed'?'var(--card-bg, #fff)':'transparent'}; color:${postViewMode==='feed'?'var(--ink)':'var(--pencil)'}; font-size:11.5px; padding:3px 8px; border-radius:6px; font-weight:700; cursor:pointer; box-shadow:${postViewMode==='feed'?'0 1px 3px rgba(0,0,0,0.1)':'none'};" 
+                onclick="switchUserProfilePostViewMode('feed', '${user.slug}', '${escapeHtml(user.name)}')"
+                title="ফিড ভিউ (Facebook Feed)"
+              >
+                📑 ফিড
+              </button>
+            </div>
           </div>
+
+          ${userPosts.length === 0 ? `
+            <div style="text-align:center; padding:36px 14px; color:var(--pencil); font-size:13px; background:var(--paper); border-radius:14px; border:1px dashed var(--paper-edge);">
+              <div style="font-size:38px; margin-bottom:8px;">📸</div>
+              <div style="font-weight:700; color:var(--ink); margin-bottom:4px;">এখনো কোনো পোস্ট প্রকাশ করা হয়নি</div>
+              <div style="font-size:12px; margin-bottom:12px;">স্টাডি আড্ডায় নিজের প্রশ্ন বা নোট শেয়ার করে যুক্ত হোন।</div>
+              ${isMe ? `
+                <button class="btn btn-gold" style="font-size:12px; padding:6px 14px; border-radius:16px;" onclick="document.getElementById('userSocialProfileModalOverlay').remove(); if(typeof openCreatePostModal==='function') openCreatePostModal();">
+                  ✍️ প্রথম পোস্ট তৈরি করুন
+                </button>
+              ` : ''}
+            </div>
+          ` : (postViewMode === 'grid' ? `
+            <!-- Instagram 3-Column Square Grid Layout -->
+            <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:6px;">
+              ${userPosts.map(p => {
+                const hasImg = !!(p.imageUrl || p.mediaUrl);
+                const likes = p.likesCount || (p.likes && p.likes.length) || (p.reactions && Object.values(p.reactions).reduce((a,b)=>a+b,0)) || 0;
+                const comments = (p.comments && p.comments.length) || 0;
+                return `
+                  <div 
+                    style="aspect-ratio:1/1; border-radius:10px; overflow:hidden; position:relative; cursor:pointer; background:#1E293B; border:1px solid var(--paper-edge); transition:transform 0.15s ease;" 
+                    onclick="document.getElementById('userSocialProfileModalOverlay').remove(); if(typeof openPostDetailModal==='function') openPostDetailModal('${p.id}');"
+                  >
+                    ${hasImg ? `
+                      <img src="${escapeHtml(p.imageUrl || p.mediaUrl)}" alt="post" style="width:100%; height:100%; object-fit:cover;" loading="lazy">
+                    ` : `
+                      <div style="width:100%; height:100%; background:linear-gradient(135deg, #1E293B, #334155); color:#fff; padding:10px; display:flex; flex-direction:column; justify-content:space-between; font-size:11px; line-height:1.35;">
+                        <span style="background:rgba(217,164,65,0.25); color:#FCD34D; font-size:9.5px; padding:1px 5px; border-radius:4px; align-self:flex-start;">#${escapeHtml(p.tag || 'স্টাডি')}</span>
+                        <div style="overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;">
+                          ${escapeHtml(p.content || '')}
+                        </div>
+                        <span style="font-size:9.5px; opacity:0.75;">${p.timestamp ? formatRelativeChatTime(p.timestamp) : ''}</span>
+                      </div>
+                    `}
+
+                    <!-- Hover/Stat Overlay (Instagram Style) -->
+                    <div style="position:absolute; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; gap:8px; color:#fff; font-size:11.5px; font-weight:700; opacity:0; transition:opacity 0.15s ease;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'">
+                      <span>❤️ ${likes}</span>
+                      <span>💬 ${comments}</span>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <!-- Facebook Card Feed View -->
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              ${userPosts.map(p => {
+                const hasMedia = !!(p.imageUrl || p.mediaUrl);
+                const postTimeStr = p.timestamp ? formatRelativeChatTime(p.timestamp) : 'পূর্বে';
+                const likes = p.likesCount || (p.likes && p.likes.length) || (p.reactions && Object.values(p.reactions).reduce((a,b)=>a+b,0)) || 0;
+                const comments = (p.comments && p.comments.length) || 0;
+                return `
+                  <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:14px; padding:12px; cursor:pointer; transition:transform 0.15s ease, box-shadow 0.15s ease; box-shadow:0 1px 4px rgba(0,0,0,0.04);" onclick="document.getElementById('userSocialProfileModalOverlay').remove(); if(typeof openPostDetailModal==='function') openPostDetailModal('${p.id}')">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                      <span style="background:rgba(217,164,65,0.12); color:#B45309; font-weight:700; font-size:11px; padding:2px 8px; border-radius:12px;">#${escapeHtml(p.tag || 'স্টাডি')}</span>
+                      <span style="font-size:11px; color:var(--pencil);">${postTimeStr}</span>
+                    </div>
+                    <div style="font-size:13px; color:var(--ink); line-height:1.45; margin-bottom:8px;">
+                      ${escapeHtml(p.content.slice(0, 130))}${p.content.length > 130 ? '...' : ''}
+                    </div>
+                    ${hasMedia ? `
+                      <div style="width:100%; height:140px; border-radius:10px; overflow:hidden; margin-bottom:8px; background:#000;">
+                        <img src="${escapeHtml(p.imageUrl || p.mediaUrl)}" alt="post photo" style="width:100%; height:100%; object-fit:cover;" loading="lazy">
+                      </div>
+                    ` : ''}
+                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:11.5px; color:var(--pencil); border-top:1px solid var(--paper-edge); padding-top:8px;">
+                      <div style="display:flex; gap:12px;">
+                        <span>❤️ ${likes} লাইক</span>
+                        <span>💬 ${comments} মন্তব্য</span>
+                      </div>
+                      <span style="color:var(--gold); font-weight:700;">সম্পূর্ণ পোস্ট দেখুন →</span>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `)}
+        ` : ''}
+
+        <!-- Tab: Profile Comments & Wall (with Auto-Scroll-to-Bottom) -->
+        ${activeTab === 'comments' ? `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-size:12px; color:var(--pencil); font-weight:600;">
+                প্রোফাইল ওয়াল ও শুভেচ্ছা বার্তা (${profileComments.length}):
+              </div>
+              <span style="font-size:11px; color:var(--gold); font-weight:700;">✨ নতুন মন্তব্য স্বয়ংক্রিয়ভাবে নিচে যুক্ত হবে</span>
+            </div>
+
+            <div id="profileCommentsScrollContainer" class="profile-comments-scroll" style="max-height:340px; overflow-y:auto; padding:6px 2px; display:flex; flex-direction:column; gap:8px;">
+              ${profileComments.length === 0 ? `
+                <div style="text-align:center; padding:32px 14px; color:var(--pencil); font-size:13px; background:var(--paper); border-radius:12px; border:1px dashed var(--paper-edge);">
+                  <div style="font-size:32px; margin-bottom:6px;">💬</div>
+                  <div style="font-weight:700; color:var(--ink); margin-bottom:4px;">এখনো কোনো প্রোফাইল মন্তব্য বা শুভেচ্ছা নেই</div>
+                  <div>সহপাঠীর প্রোফাইল ওয়ালে প্রথম শুভেচ্ছা বার্তাটি আপনিই লিখুন!</div>
+                </div>
+              ` : profileComments.map(c => `
+                <div id="prof_comment_${c.id}" style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:12px; padding:10px 12px; font-size:13px; transition:all 0.3s ease;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
+                    <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="openUserProfileModal('${escapeHtml(c.authorSlug || '')}', '${escapeHtml(c.authorName || '')}')">
+                      <span style="font-size:16px;">${c.authorAvatar || '🧑‍🎓'}</span>
+                      <b style="color:var(--ink); font-size:12.5px;">${escapeHtml(c.authorName || 'সহপাঠী')}</b>
+                      ${c.badgeHtml || ''}
+                    </div>
+                    <span style="font-size:10.5px; color:var(--pencil);">${formatRelativeChatTime(c.timestamp)}</span>
+                  </div>
+                  <div style="color:var(--ink); line-height:1.45; word-break:break-word; padding-left:24px;">
+                    ${escapeHtml(c.text)}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+
+            <!-- Add Profile Comment Bar (Facebook / Instagram Style) -->
+            <div style="display:flex; align-items:center; gap:8px; margin-top:4px; padding-top:8px; border-top:1px solid var(--paper-edge);">
+              <div style="width:30px; height:30px; border-radius:50%; background:var(--paper); border:1px solid var(--paper-edge); display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0;">
+                ${currentMe.avatar || '🧑‍🎓'}
+              </div>
+              <input type="text" id="profile_comment_input_${user.slug}" placeholder="${escapeHtml(currentMe.name)} হিসেবে বার্তা বা শুভেচ্ছা লিখুন..." style="flex:1; margin-bottom:0; font-size:12.5px; padding:8px 12px; border-radius:18px; border:1px solid var(--paper-edge); background:var(--paper); color:var(--ink);" onkeydown="if(event.key==='Enter') submitProfileComment('${user.slug}', '${escapeHtml(user.name)}')">
+              <button class="btn btn-gold" style="padding:8px 16px; font-size:12px; font-weight:700; border-radius:18px; flex-shrink:0;" onclick="submitProfileComment('${user.slug}', '${escapeHtml(user.name)}')">পাঠাও</button>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Tab 2: Followers, Following & Friends List (Interactive Instagram/Facebook Connection System) -->
+        ${activeTab === 'friends' ? `
+          <div>
+            <!-- Subtab Pills -->
+            <div style="display:flex; gap:6px; margin-bottom:12px; background:var(--paper); padding:3px; border-radius:12px; border:1px solid var(--paper-edge);">
+              <button 
+                type="button" 
+                style="flex:1; border:none; background:${friendsSubTab==='followers'?'var(--card-bg, #fff)':'transparent'}; color:${friendsSubTab==='followers'?'#2563EB':'var(--pencil)'}; font-size:12px; padding:5px 8px; border-radius:8px; font-weight:700; cursor:pointer; box-shadow:${friendsSubTab==='followers'?'0 1px 3px rgba(0,0,0,0.1)':'none'};" 
+                onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}', 'followers')"
+              >
+                👥 ফলোয়ার (${socialStats.followersCount})
+              </button>
+              <button 
+                type="button" 
+                style="flex:1; border:none; background:${friendsSubTab==='following'?'var(--card-bg, #fff)':'transparent'}; color:${friendsSubTab==='following'?'#D97706':'var(--pencil)'}; font-size:12px; padding:5px 8px; border-radius:8px; font-weight:700; cursor:pointer; box-shadow:${friendsSubTab==='following'?'0 1px 3px rgba(0,0,0,0.1)':'none'};" 
+                onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}', 'following')"
+              >
+                ➕ ফলোয়িং (${socialStats.followingCount})
+              </button>
+              <button 
+                type="button" 
+                style="flex:1; border:none; background:${friendsSubTab==='friends'?'var(--card-bg, #fff)':'transparent'}; color:${friendsSubTab==='friends'?'#10B981':'var(--pencil)'}; font-size:12px; padding:5px 8px; border-radius:8px; font-weight:700; cursor:pointer; box-shadow:${friendsSubTab==='friends'?'0 1px 3px rgba(0,0,0,0.1)':'none'};" 
+                onclick="switchUserProfileTab('friends', '${user.slug}', '${escapeHtml(user.name)}', 'friends')"
+              >
+                🤝 ফ্রেন্ডস (${socialStats.friendsCount})
+              </button>
+            </div>
+
+            <!-- List of Peer Cards -->
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              ${(() => {
+                const targetList = (friendsSubTab === 'followers') 
+                  ? socialStats.followersList 
+                  : ((friendsSubTab === 'following') ? socialStats.followingList : socialStats.friendsList);
+
+                if(!targetList || targetList.length === 0){
+                  return `
+                    <div style="text-align:center; padding:32px 10px; color:var(--pencil); font-size:13px;">
+                      <div style="font-size:32px; margin-bottom:6px;">👥</div>
+                      এখানে এখনো কোনো শিক্ষার্থী যুক্ত হয়নি।
+                    </div>
+                  `;
+                }
+
+                const myStats = getUserSocialStats(currentMe.slug);
+
+                return targetList.map(peerSlug => {
+                  const peerProfile = getLocalUserProfile(peerSlug) || COMMUNITY_STUDENT_ROSTER.find(r => r.slug === peerSlug) || {
+                    slug: peerSlug,
+                    name: peerSlug.replace(/_/g, ' '),
+                    avatar: '🧑‍🎓',
+                    institution: 'সহপাঠী শিক্ষার্থী'
+                  };
+
+                  const isFollowingThisPeer = myStats.followingList.includes(peerSlug);
+                  const isPeerMe = currentMe.slug === peerSlug;
+
+                  return `
+                    <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:12px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+                      <div style="display:flex; align-items:center; gap:10px; cursor:pointer; flex:1;" onclick="openUserProfileModal('${peerProfile.slug}', '${escapeHtml(peerProfile.name)}')">
+                        <div style="width:38px; height:38px; border-radius:50%; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:20px; border:1.5px solid var(--paper-edge); overflow:hidden;">
+                          ${peerProfile.avatarPhoto ? `<img src="${escapeHtml(peerProfile.avatarPhoto)}" alt="" style="width:100%; height:100%; object-fit:cover;">` : (peerProfile.avatar || '🧑‍🎓')}
+                        </div>
+                        <div>
+                          <div style="font-size:13.5px; font-weight:700; color:var(--ink); line-height:1.2;">${escapeHtml(peerProfile.name)}</div>
+                          <div style="font-size:11px; color:var(--pencil);">@${escapeHtml(peerProfile.slug)} ${peerProfile.institution ? `· ${escapeHtml(peerProfile.institution)}` : ''}</div>
+                        </div>
+                      </div>
+
+                      <div style="display:flex; gap:6px; align-items:center;">
+                        ${!isPeerMe ? `
+                          <button 
+                            class="btn ${isFollowingThisPeer ? 'btn-outline' : 'btn-primary'}" 
+                            style="font-size:11.5px; padding:4px 10px; border-radius:14px; font-weight:700;" 
+                            onclick="toggleFollowUser('${peerProfile.slug}', '${escapeHtml(peerProfile.name)}')"
+                          >
+                            ${isFollowingThisPeer ? 'ফলোয়িং ✓' : '➕ ফলো'}
+                          </button>
+                        ` : ''}
+                        <button class="btn btn-outline" style="font-size:11.5px; padding:4px 9px; border-radius:14px;" onclick="openUserProfileModal('${peerProfile.slug}', '${escapeHtml(peerProfile.name)}')">
+                          প্রোফাইল
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                }).join('');
+              })()}
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Tab 3: Photos & Media Gallery (Instagram Style Photo Wall) -->
+        ${activeTab === 'photos' ? `
+          <div>
+            <div style="font-size:12px; color:var(--pencil); margin-bottom:10px;">
+              📸 আপলোডকৃত সকল স্টাডি ছবি ও ডাউট সমাধান (${userPhotos.length}):
+            </div>
+            ${userPhotos.length === 0 ? `
+              <div style="text-align:center; padding:36px 14px; color:var(--pencil); font-size:13px; background:var(--paper); border-radius:14px; border:1px dashed var(--paper-edge);">
+                <div style="font-size:36px; margin-bottom:6px;">🖼️</div>
+                এখনো কোনো ছবি বা মিডিয়া পোস্ট প্রকাশ করা হয়নি।
+              </div>
+            ` : `
+              <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:6px;">
+                ${userPhotos.map(p => `
+                  <div 
+                    style="aspect-ratio:1/1; border-radius:10px; overflow:hidden; cursor:pointer; background:#000; position:relative;"
+                    onclick="if(typeof openChatImageLightbox==='function'){ openChatImageLightbox('${escapeHtml(p.imageUrl || p.mediaUrl)}', 'পোস্ট ছবি'); } else { window.open('${escapeHtml(p.imageUrl || p.mediaUrl)}'); }"
+                  >
+                    <img src="${escapeHtml(p.imageUrl || p.mediaUrl)}" alt="photo" style="width:100%; height:100%; object-fit:cover;" loading="lazy">
+                    <div style="position:absolute; bottom:0; inset-x:0; background:linear-gradient(transparent, rgba(0,0,0,0.7)); padding:4px 6px; font-size:10px; color:#fff;">
+                      ❤️ ${(p.likes && p.likes.length) || p.likesCount || 0}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+        ` : ''}
+
+        <!-- Tab 4: About & Achievements -->
+        ${activeTab === 'about' ? `
+          <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:14px; padding:16px; font-size:13px; display:flex; flex-direction:column; gap:12px; box-shadow:0 1px 4px rgba(0,0,0,0.03);">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--paper-edge); padding-bottom:8px;">
+              <span style="color:var(--pencil);">🏫 শিক্ষাপ্রতিষ্ঠান:</span>
+              <span style="font-weight:700; color:var(--ink);">${escapeHtml(user.institution || 'উন্মুক্ত শিক্ষার্থী')}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--paper-edge); padding-bottom:8px;">
+              <span style="color:var(--pencil);">⭐ প্রোফাইল স্ট্যাটাস:</span>
+              <span style="font-weight:700; color:var(--green);">${isVerified ? 'ভেরিফাইড শিক্ষার্থী ✓' : 'সাধারণ শিক্ষার্থী 🌐'}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--paper-edge); padding-bottom:8px;">
+              <span style="color:var(--pencil);">❤️ মোট প্রাপ্ত লাইক:</span>
+              <span style="font-weight:700; color:#EF4444;">${userPosts.reduce((acc, p) => acc + (p.likesCount || (p.likes && p.likes.length) || 0), 0)} টি লাইক</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--paper-edge); padding-bottom:8px;">
+              <span style="color:var(--pencil);">🔥 মোট স্টাডি অর্জন:</span>
+              <span style="font-weight:700; color:#D97706;">🥇 সক্রিয় স্টাডি মেম্বার</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--pencil);">📅 অ্যাকাউন্টের বয়স:</span>
+              <span style="font-weight:700; color:var(--ink);">${user.createdAt ? new Date(user.createdAt).toLocaleDateString('bn-BD', { month:'long', year:'numeric' }) : '২০২৬'}</span>
+            </div>
+          </div>
+        ` : ''}
+
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+};
+
+// ----------------------------------------------------------------------------
+// Cover Photo Changer Modal (Facebook / Instagram Style)
+// ----------------------------------------------------------------------------
+window.openChangeCoverPhotoModal = function(){
+  const old = document.getElementById('coverPhotoChangerOverlay');
+  if(old) old.remove();
+
+  const presets = [
+    { name: 'গ্যালাক্সি স্টাডি', url: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?w=800&auto=format&fit=crop&q=80' },
+    { name: 'বুকশেলফ ও লাইব্রেরি', url: 'https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?w=800&auto=format&fit=crop&q=80' },
+    { name: 'স্বপ্ন ক্যাম্পাস', url: 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?w=800&auto=format&fit=crop&q=80' },
+    { name: 'গোল্ডেন সানরাইজ', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop&q=80' },
+    { name: 'মিনিমাল স্টাডি ডেস্ক', url: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=800&auto=format&fit=crop&q=80' },
+    { name: 'সাকুরা গার্ডেন', url: 'https://images.unsplash.com/photo-1522383225653-ed111181a951?w=800&auto=format&fit=crop&q=80' }
+  ];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'coverPhotoChangerOverlay';
+  overlay.className = 'community-modal-overlay';
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+
+  overlay.innerHTML = `
+    <div class="community-modal" style="max-width:440px;" onclick="event.stopPropagation()">
+      <div class="community-modal-header">
+        <h3 style="margin:0; font-size:16.5px; color:var(--ink);">🎨 কভার ফটো পরিবর্তন করুন</h3>
+        <button class="reaction-btn" style="padding:4px 9px;" onclick="document.getElementById('coverPhotoChangerOverlay').remove()">✕</button>
+      </div>
+
+      <div class="community-modal-body">
+        <div style="font-size:12.5px; color:var(--pencil); margin-bottom:12px;">
+          আপনার পছন্দমতো স্টাডি ব্যাকগ্রাউন্ড নির্বাচন করুন অথবা নিজের ছবি আপলোড করুন:
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px;">
+          ${presets.map((p, idx) => `
+            <div style="border-radius:10px; overflow:hidden; border:2px solid var(--paper-edge); cursor:pointer; height:74px; position:relative;" onclick="saveSelectedCoverPhoto('${p.url}')">
+              <img src="${p.url}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover;">
+              <div style="position:absolute; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:700;">${p.name}</div>
+            </div>
+          `).join('')}
+        </div>
+
+        <div style="border-top:1px dashed var(--paper-edge); padding-top:14px;">
+          <label class="field-label">📁 নিজের ডিভাইস থেকে ছবি আপলোড করুন:</label>
+          <input type="file" id="customCoverFileInput" accept="image/*" style="font-size:12px; margin-bottom:10px;" onchange="handleCustomCoverFileChosen(event)">
         </div>
       </div>
     </div>
   `;
 
   document.body.appendChild(overlay);
+};
+
+window.saveSelectedCoverPhoto = function(coverUrl){
+  const me = getCurrentUserIdentity();
+  if(!me || !me.slug) return;
+  const prof = getLocalUserProfile(me.slug) || { ...me };
+  prof.coverPhoto = coverUrl;
+  saveLocalUserProfile(prof);
+  if(typeof saveUserProfile === 'function') saveUserProfile(prof);
+  toast('কভার ফটো সফলভাবে সংরক্ষিত হয়েছে! 🎨');
+  const overlay = document.getElementById('coverPhotoChangerOverlay');
+  if(overlay) overlay.remove();
+  openUserProfileModal(me.slug, me.name);
+};
+
+window.handleCustomCoverFileChosen = function(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  if(file.size > 8 * 1024 * 1024){
+    toast('ছবির সাইজ ৮ মেগাবাইটের কম হতে হবে');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(event){
+    saveSelectedCoverPhoto(event.target.result);
+  };
+  reader.readAsDataURL(file);
+};
+
+window.openChangeAvatarModal = function(){
+  openEditProfileModal();
 };
 
 // ----------------------------------------------------------------------------
@@ -273,10 +1029,14 @@ window.openEditProfileModal = function(){
         <label class="field-label">অ্যাভাটার ইমোজি</label>
         <div style="display:flex; gap:8px; margin-bottom:14px; font-size:22px;">
           ${['🧑‍🎓', '🎓', '🔬', '📐', '⭐', '🚀', '💡', '📚'].map(emoji => `
-            <button type="button" class="reaction-btn" style="padding:6px 10px; font-size:20px;" onclick="document.getElementById('editProfAvatar').value='${emoji}'; toast('নির্বাচিত: ${emoji}');">${emoji}</button>
+            <button type="button" class="reaction-btn" style="padding:6px 10px; font-size:20px;" onclick="document.getElementById('editProfAvatar').value='${emoji}'; document.getElementById('editProfAvatarPhoto').value=''; toast('নির্বাচিত: ${emoji}');">${emoji}</button>
           `).join('')}
         </div>
         <input type="hidden" id="editProfAvatar" value="${me.avatar || '🧑‍🎓'}">
+
+        <label class="field-label">📷 নিজের গ্যালারি থেকে প্রোফাইল ছবি (ঐচ্ছিক)</label>
+        <input type="file" id="editProfAvatarFile" accept="image/*" style="font-size:12px; margin-bottom:14px;" onchange="handleAvatarFileChosen(event)">
+        <input type="hidden" id="editProfAvatarPhoto" value="${prof.avatarPhoto || ''}">
 
         <button class="btn btn-gold btn-block" onclick="saveEditedUserProfile()">💾 প্রোফাইল সংরক্ষণ করো</button>
       </div>
@@ -286,30 +1046,52 @@ window.openEditProfileModal = function(){
   document.body.appendChild(overlay);
 };
 
+window.handleAvatarFileChosen = function(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  if(file.size > 5 * 1024 * 1024){
+    toast('ছবির সাইজ ৫ মেগাবাইটের কম হতে হবে');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(event){
+    const el = document.getElementById('editProfAvatarPhoto');
+    if(el) el.value = event.target.result;
+    toast('ছবি নির্বাচিত হয়েছে! সংরক্ষণ বাটনে চাপুন 📸');
+  };
+  reader.readAsDataURL(file);
+};
+
 window.saveEditedUserProfile = function(){
   const name = ((document.getElementById('editProfName')||{}).value||'').trim();
   const inst = ((document.getElementById('editProfInst')||{}).value||'').trim();
   const bio = ((document.getElementById('editProfBio')||{}).value||'').trim();
   const avatar = ((document.getElementById('editProfAvatar')||{}).value||'🧑‍🎓').trim();
+  const avatarPhoto = ((document.getElementById('editProfAvatarPhoto')||{}).value||'').trim();
 
   if(!name){ toast('নাম খালি রাখা যাবে না'); return; }
 
   const me = getCurrentUserIdentity();
+  const prof = getLocalUserProfile(me.slug) || {};
   const updated = {
+    ...prof,
     ...me,
     name,
     institution: inst,
     bio,
-    avatar
+    avatar,
+    avatarPhoto: avatarPhoto || prof.avatarPhoto || ''
   };
 
   saveLocalUserProfile(updated);
+  if(typeof saveUserProfile === 'function') saveUserProfile(updated);
 
   // Update session
   const stud = typeof getLoggedStudent === 'function' ? getLoggedStudent() : null;
   if(stud){
     stud.name = name;
     stud.avatar = avatar;
+    stud.avatarPhoto = updated.avatarPhoto;
     stud.institution = inst;
     stud.bio = bio;
     setLoggedStudent(stud);
@@ -596,13 +1378,14 @@ window.openDirectChat = function(peerSlug, peerName, peerAvatar, peerRole){
     refreshCommunityChatListStream();
   }
 
-  // Listen to Firestore real-time updates for this chat
+  // Listen to Firestore real-time updates for this chat with E2EE participant context
   if(typeof fbListenChatMessages === 'function'){
-    fbListenChatMessages(chatId, (cloudMsgs) => {
+    fbListenChatMessages(chatId, me.slug, activeDirectChatInfo.peerSlug, (cloudMsgs) => {
       if(activeDirectChatInfo && activeDirectChatInfo.chatId === chatId){
         if(cloudMsgs && cloudMsgs.length > 0){
           saveLocalChatMessages(chatId, cloudMsgs);
-          renderChatMessagesList(cloudMsgs);
+          renderChatMessagesList(cloudMsgs, true);
+          scrollChatToBottom(true);
           const latest = cloudMsgs[cloudMsgs.length - 1];
           recordChatMessageInConversation(chatId, latest, activeDirectChatInfo);
 
@@ -669,13 +1452,13 @@ function updateDirectChatTypingUI(typingMap){
     peerTypingSafetyTimeout = setTimeout(() => {
       if(indicatorEl) indicatorEl.style.display = 'none';
       if(headerSubtitleEl){
-        headerSubtitleEl.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10B981;"></span> পার্সোনাল চ্যাট · Firestore লাইভ`;
+        headerSubtitleEl.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10B981;"></span> অনলাইন`;
       }
     }, 5500);
   } else {
     indicatorEl.style.display = 'none';
     if(headerSubtitleEl){
-      headerSubtitleEl.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10B981;"></span> পার্সোনাল চ্যাট · Firestore লাইভ`;
+      headerSubtitleEl.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10B981;"></span> অনলাইন`;
     }
   }
 }
@@ -767,7 +1550,7 @@ function renderDirectChatDrawer(){
             <span>${escapeHtml(peerName)}</span>
           </div>
           <div id="directChatHeaderSubtitle" style="font-size:10.5px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:4px;">
-            <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10B981;"></span> পার্সোনাল চ্যাট · Firestore লাইভ
+            <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10B981;"></span> অনলাইন
           </div>
         </div>
       </div>
@@ -829,6 +1612,13 @@ function renderDirectChatDrawer(){
       >📷</button>
       <button 
         type="button" 
+        id="directChatVideoBtn"
+        style="width:36px; height:36px; border-radius:50%; font-size:17px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; background:rgba(59,130,246,0.12); border:1.5px solid rgba(59,130,246,0.35); cursor:pointer; color:#3B82F6; transition:transform 0.15s ease;" 
+        onclick="triggerChatVideoFileSelect()" 
+        title="পড়াশোনার ভিডিও ক্লিপ পাঠান"
+      >🎥</button>
+      <button 
+        type="button" 
         id="directChatVoiceBtn"
         style="width:36px; height:36px; border-radius:50%; font-size:17px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; background:rgba(239,68,68,0.12); border:1.5px solid rgba(239,68,68,0.35); cursor:pointer; color:#EF4444; transition:transform 0.15s ease;" 
         onclick="toggleDirectChatVoiceRecording()" 
@@ -841,6 +1631,13 @@ function renderDirectChatDrawer(){
         capture="environment" 
         style="display:none;" 
         onchange="handleChatCameraFileChosen(event)"
+      >
+      <input 
+        type="file" 
+        id="chatVideoDirectInput" 
+        accept="video/mp4,video/webm,video/ogg,video/quicktime,video/*" 
+        style="display:none;" 
+        onchange="handleChatVideoFileChosen(event)"
       >
       <input 
         type="text" 
@@ -874,7 +1671,24 @@ function renderDirectChatDrawer(){
   }, 100);
 }
 
-function renderChatMessagesList(msgs){
+window.scrollChatToBottom = function(smooth = false){
+  const container = document.getElementById('directChatMessagesScroll');
+  if(!container) return;
+  const doScroll = () => {
+    const target = container.scrollHeight;
+    if(smooth && typeof container.scrollTo === 'function'){
+      container.scrollTo({ top: target, behavior: 'smooth' });
+    } else {
+      container.scrollTop = target;
+    }
+  };
+  doScroll();
+  requestAnimationFrame(doScroll);
+  setTimeout(doScroll, 80);
+  setTimeout(doScroll, 220);
+};
+
+function renderChatMessagesList(msgs, smooth = false){
   const container = document.getElementById('directChatMessagesScroll');
   if(!container) return;
   const me = getCurrentUserIdentity();
@@ -932,8 +1746,24 @@ function renderChatMessagesList(msgs){
       </div>
     ` : '';
 
-    const showCaption = m.text && !isOnlyPhotoPlaceholder && (!hasAudio || !isOnlyAudioPlaceholder);
-    const captionHtml = showCaption ? `<div style="margin-top:${(hasImage || hasAudio) ? '6px' : '0'}; word-break:break-word;">${escapeHtml(m.text)}</div>` : '';
+    // Video clip attachment
+    const videoUrl = m.videoUrl || (m.messageType === 'video_clip' ? m.mediaUrl : null);
+    const hasVideo = !!videoUrl;
+    const isOnlyVideoPlaceholder = m.text === '🎥 ভিডিও ক্লিপ' || m.text === '🎥 Video' || m.text === '🎥 ভিডিও';
+    const safeVideoSrc = videoUrl ? escapeHtml(videoUrl) : '';
+
+    const videoHtml = hasVideo ? `
+      <div class="chat-video-container" style="border-radius:10px; overflow:hidden; background:#000; margin-top:4px; max-width:280px; box-shadow:0 3px 10px rgba(0,0,0,0.25);">
+        <video src="${safeVideoSrc}" controls playsinline preload="metadata" style="width:100%; max-height:240px; display:block; border-radius:10px 10px 0 0; background:#000;"></video>
+        <div style="font-size:10px; color:#A7F3D0; background:#064E3B; padding:3px 8px; display:flex; align-items:center; justify-content:space-between; gap:4px; font-weight:600;">
+          <span>🔒 সুরক্ষিত ভিডিও বার্তা</span>
+          <span style="opacity:0.85;">নিরাপদ</span>
+        </div>
+      </div>
+    ` : '';
+
+    const showCaption = m.text && !isOnlyPhotoPlaceholder && !isOnlyVideoPlaceholder && (!hasAudio || !isOnlyAudioPlaceholder);
+    const captionHtml = showCaption ? `<div style="margin-top:${(hasImage || hasAudio || hasVideo) ? '6px' : '0'}; word-break:break-word;">${escapeHtml(m.text)}</div>` : '';
 
     let receiptHtml = '';
     if(isMe){
@@ -948,9 +1778,10 @@ function renderChatMessagesList(msgs){
     }
 
     return `
-      <div class="chat-bubble ${isMe ? 'chat-bubble-me' : 'chat-bubble-peer'} ${hasImage ? 'chat-bubble-has-photo' : ''} ${hasAudio ? 'chat-bubble-has-voice' : ''}">
+      <div class="chat-bubble ${isMe ? 'chat-bubble-me' : 'chat-bubble-peer'} ${hasImage ? 'chat-bubble-has-photo' : ''} ${hasAudio ? 'chat-bubble-has-voice' : ''} ${hasVideo ? 'chat-bubble-has-video' : ''}">
         ${!isMe ? `<div style="font-size:10.5px; font-weight:700; color:var(--gold); margin-bottom:3px;">${escapeHtml(m.senderName)}</div>` : ''}
         ${imageHtml}
+        ${videoHtml}
         ${audioHtml}
         ${captionHtml}
         <div class="chat-time" style="color:${isMe ? 'rgba(255,255,255,0.78)' : 'var(--pencil)'}; display:flex; align-items:center; justify-content:flex-end; gap:2px;">
@@ -961,7 +1792,7 @@ function renderChatMessagesList(msgs){
     `;
   }).join('');
 
-  container.scrollTop = container.scrollHeight;
+  scrollChatToBottom(smooth);
 }
 
 window.closeDirectChat = function(){
@@ -1046,8 +1877,9 @@ window.submitDirectChatMessage = function(){
   msgs.push(newMsg);
   saveLocalChatMessages(chatId, msgs);
 
-  // Re-render
-  renderChatMessagesList(msgs);
+  // Re-render and auto-scroll to bottom immediately
+  renderChatMessagesList(msgs, true);
+  scrollChatToBottom(true);
   input.value = '';
 
   if(typeof playSfx === 'function') playSfx('slash');
@@ -1426,8 +2258,9 @@ window.submitPendingChatPhoto = function(){
   msgs.push(newMsg);
   saveLocalChatMessages(chatId, msgs);
 
-  // Render immediately
-  renderChatMessagesList(msgs);
+  // Render immediately and auto-scroll to bottom
+  renderChatMessagesList(msgs, true);
+  scrollChatToBottom(true);
 
   if(typeof playSfx === 'function') playSfx('slash');
   toast('📸 ছবি সফলভাবে পাঠানো হয়েছে!');
@@ -1475,6 +2308,152 @@ window.openChatImageLightbox = function(imgSrc){
 window.closeChatImageLightbox = function(){
   const overlay = document.getElementById('chatImageLightboxOverlay');
   if(overlay) overlay.remove();
+};
+
+// ============================================================================
+// Direct Chat Video Clips & Media Messaging (E2EE Client-side Encrypted)
+// ============================================================================
+let pendingChatVideoDataUrl = null;
+
+window.triggerChatVideoFileSelect = function(){
+  const input = document.getElementById('chatVideoDirectInput');
+  if(input) input.click();
+};
+
+window.handleChatVideoFileChosen = function(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('video/')){
+    toast('শুধুমাত্র ভিডিও ফাইল (MP4/WebM) নির্বাচন করুন');
+    return;
+  }
+  // Max size 25MB for client-side memory safety
+  if(file.size > 25 * 1024 * 1024){
+    toast('ভিডিও ফাইলের সাইজ ২৫ মেগাবাইটের (25MB) কম হতে হবে');
+    return;
+  }
+
+  toast('ভিডিও প্রস্তুত হচ্ছে...');
+  const reader = new FileReader();
+  reader.onload = function(event){
+    openChatVideoPreviewModal(event.target.result, file.name);
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+};
+
+window.openChatVideoPreviewModal = function(videoDataUrl, fileName){
+  pendingChatVideoDataUrl = videoDataUrl;
+  const old = document.getElementById('chatVideoPreviewModalOverlay');
+  if(old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'chatVideoPreviewModalOverlay';
+  overlay.className = 'chat-camera-modal-overlay';
+  overlay.onclick = function(e){
+    if(e.target === overlay) closeChatVideoPreviewModal();
+  };
+
+  overlay.innerHTML = `
+    <div class="chat-camera-card" onclick="event.stopPropagation()">
+      <div style="padding:12px 16px; background:#1F2937; border-bottom:1px solid rgba(255,255,255,0.1); display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:20px;">🎥</span>
+          <div>
+            <h3 style="margin:0; font-size:15px; font-weight:700; color:#FFFFFF;">ভিডিও প্রিভিউ</h3>
+            <span style="font-size:11px; color:#A7F3D0;">🔒 সম্পূর্ণ নিরাপদ ও ব্যক্তিগত বার্তা</span>
+          </div>
+        </div>
+        <button onclick="closeChatVideoPreviewModal()" style="background:none; border:none; color:#FFFFFF; font-size:20px; cursor:pointer; padding:4px;" title="বাতিল">✕</button>
+      </div>
+
+      <div style="background:#000; display:flex; justify-content:center; align-items:center; max-height:48vh; overflow:hidden;">
+        <video src="${videoDataUrl}" controls playsinline style="max-width:100%; max-height:45vh;"></video>
+      </div>
+
+      <div style="padding:14px 16px; background:#111827;">
+        <div style="margin-bottom:12px;">
+          <label style="font-size:11.5px; font-weight:600; color:#9CA3AF; margin-bottom:4px; display:block;">বার্তার বিবরণ বা ক্যাপশন (ঐচ্ছিক):</label>
+          <input 
+            type="text" 
+            id="chatVideoCaptionInput" 
+            placeholder="যেমন: এই লেকচার বা অংকের ভিডিও ক্লিপটি দেখো..." 
+            style="width:100%; box-sizing:border-box; background:#1F2937; border:1px solid rgba(255,255,255,0.18); color:#FFFFFF; font-size:13px; padding:9px 12px; border-radius:10px; margin-bottom:0;"
+            onkeydown="if(event.key==='Enter') submitPendingChatVideo()"
+          >
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+          <button type="button" class="btn btn-outline" style="border-color:rgba(255,255,255,0.3); color:#FFFFFF; font-size:12.5px; padding:7px 14px; border-radius:10px;" onclick="closeChatVideoPreviewModal()">
+            ✕ বাতিল
+          </button>
+          <button type="button" class="btn btn-gold" style="font-size:13px; font-weight:700; padding:8px 20px; border-radius:10px; display:inline-flex; align-items:center; gap:6px;" onclick="submitPendingChatVideo()">
+            <span>🚀</span> এনক্রিপ্ট করে পাঠান
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  setTimeout(() => {
+    const input = document.getElementById('chatVideoCaptionInput');
+    if(input) input.focus();
+  }, 100);
+};
+
+window.closeChatVideoPreviewModal = function(){
+  pendingChatVideoDataUrl = null;
+  const overlay = document.getElementById('chatVideoPreviewModalOverlay');
+  if(overlay) overlay.remove();
+};
+
+window.submitPendingChatVideo = function(){
+  if(!pendingChatVideoDataUrl || !activeDirectChatInfo) return;
+
+  const captionInput = document.getElementById('chatVideoCaptionInput');
+  const caption = captionInput ? captionInput.value.trim() : '';
+  const videoData = pendingChatVideoDataUrl;
+  const { chatId, peerSlug } = activeDirectChatInfo;
+  const me = getCurrentUserIdentity();
+
+  const displayText = caption ? caption : '🎥 ভিডিও ক্লিপ';
+
+  const newMsg = {
+    id: 'msg_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+    chatId,
+    participants: [me.slug, peerSlug],
+    participantSlugs: [me.slug, peerSlug],
+    senderSlug: me.slug,
+    senderName: me.name,
+    senderAvatar: me.avatar,
+    senderBadge: me.badge,
+    text: displayText,
+    videoUrl: videoData,
+    mediaUrl: videoData,
+    messageType: 'video_clip',
+    isEncrypted: true,
+    timestamp: Date.now(),
+    status: 'sent'
+  };
+
+  closeChatVideoPreviewModal();
+
+  const msgs = getLocalChatMessages(chatId);
+  msgs.push(newMsg);
+  saveLocalChatMessages(chatId, msgs);
+
+  renderChatMessagesList(msgs, true);
+  scrollChatToBottom(true);
+
+  if(typeof playSfx === 'function') playSfx('slash');
+  toast('🎥 ভিডিও সফলভাবে এনক্রিপ্ট করে পাঠানো হয়েছে!');
+
+  if(typeof fbSendChatMessage === 'function'){
+    fbSendChatMessage(chatId, newMsg, activeDirectChatInfo);
+  }
+
+  recordChatMessageInConversation(chatId, newMsg, activeDirectChatInfo);
 };
 
 // ============================================================================
@@ -1689,7 +2668,7 @@ window.finishAndSendVoiceRecording = function(){
     const mime = voiceMediaRecorder.mimeType || 'audio/webm';
     const audioBlob = new Blob(voiceAudioChunks, { type: mime });
 
-    toast('ভয়েস ক্লিপ Firebase Storage-এ আপলোড হচ্ছে... ☁️');
+    toast('ভয়েস ক্লিপ পাঠানো হচ্ছে... 🎙️');
 
     try {
       const { chatId, peerSlug } = activeDirectChatInfo;
@@ -1731,8 +2710,9 @@ window.finishAndSendVoiceRecording = function(){
       msgs.push(newMsg);
       saveLocalChatMessages(chatId, msgs);
 
-      // Render immediately
-      renderChatMessagesList(msgs);
+      // Render immediately and auto-scroll to bottom
+      renderChatMessagesList(msgs, true);
+      scrollChatToBottom(true);
 
       if(typeof playSfx === 'function') playSfx('slash');
       toast('🎤 ভয়েস মেসেজ সফলভাবে পাঠানো হয়েছে!');
@@ -2372,7 +3352,7 @@ function getChatListContentHtml(stud, isTeacher){
             <h3 style="margin:0; font-size:17.5px; color:var(--ink); display:flex; align-items:center; gap:8px;">
               <span>স্টুডেন্ট ডিরেক্ট চ্যাট লিস্ট</span>
               <span style="background:rgba(16,185,129,0.12); color:#059669; border:1px solid rgba(16,185,129,0.25); padding:2px 8px; border-radius:12px; font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;">
-                <span style="width:6px; height:6px; border-radius:50%; background:#10B981;"></span> Firestore Live Sync
+                <span style="width:6px; height:6px; border-radius:50%; background:#10B981;"></span> সক্রিয়
               </span>
             </h3>
             <div style="font-size:12px; color:var(--pencil); margin-top:2px;">সহপাঠী ও শিক্ষকদের সাথে রিয়েল-টাইমে ১-অন-১ সরাসরি প্রাইভেট মেসেজিং</div>

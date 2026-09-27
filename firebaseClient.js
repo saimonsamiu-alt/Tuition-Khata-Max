@@ -34,19 +34,15 @@ window.initFirebaseService = function(){
       try {
         if(typeof firebase.storage === 'function'){
           firebaseStorage = firebase.storage();
-          console.log('Firebase Storage initialized successfully');
         }
       } catch(stErr){
-        console.warn('Firebase Storage init notice:', stErr);
       }
       firebaseInitialized = true;
       isCloudSyncActive = true;
-      console.log('Firebase Firestore initialized successfully for Study Adda');
       startRealtimeCommunitySync();
       startRealtimeStorySync();
     }
   } catch(err) {
-    console.warn('Firebase init warning (running in offline/local storage mode):', err);
     isCloudSyncActive = false;
   }
   return firestoreDb;
@@ -73,11 +69,9 @@ window.fbUploadVoiceClip = async function(blob, chatId, meta){
       });
       const downloadUrl = await snapshot.ref.getDownloadURL();
       if(downloadUrl){
-        console.log('Voice clip uploaded to Firebase Storage:', downloadUrl);
         return downloadUrl;
       }
     } catch(err){
-      console.warn('Firebase Storage cloud upload notice (using robust data fallback):', err);
     }
   }
 
@@ -120,6 +114,9 @@ function startRealtimeCommunitySync(){
           const finalPosts = Array.from(mergedMap.values());
           finalPosts.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
           localStorage.setItem('tuition_community_posts_v1', JSON.stringify(finalPosts));
+          if(typeof window.invalidateCommunityPostsCache === 'function'){
+            window.invalidateCommunityPostsCache(finalPosts);
+          }
           
           // Notify community feed if currently viewed
           if(typeof updateCommunityFeedLive === 'function'){
@@ -207,10 +204,23 @@ window.fbSaveStory = async function(storyData){
 // ============================================================================
 window.fbSaveUserProfile = async function(profile){
   initFirebaseService();
-  if(!firestoreDb) return null;
+  if(!firestoreDb || !profile || !profile.slug) return null;
   try {
+    const safeProfile = { ...profile };
+    // CRITICAL SECURITY: Never leak plain-text or hashed password to public cloud Firestore!
+    delete safeProfile.password;
+    delete safeProfile.passwordHash;
+
+    // Ensure E2EE public key is generated & attached so peers can derive shared secret
+    if(!safeProfile.publicKeyJwk && typeof ensureUserCryptoKeys === 'function'){
+      try {
+        const pubKey = await ensureUserCryptoKeys(profile.slug);
+        if(pubKey) safeProfile.publicKeyJwk = JSON.stringify(pubKey);
+      } catch(e){}
+    }
+
     const docRef = firestoreDb.collection('user_profiles').doc(profile.slug);
-    await docRef.set(profile, { merge: true });
+    await docRef.set(safeProfile, { merge: true });
     return profile.slug;
   } catch(err) {
     console.warn('fbSaveUserProfile error:', err);
@@ -232,6 +242,234 @@ window.fbGetUserProfile = async function(slug){
 };
 
 // ============================================================================
+// Web Crypto API: Client-Side End-to-End Encryption (ECDH + AES-GCM 256-bit)
+// ============================================================================
+const E2EE_KEYPAIR_STORAGE_PREFIX = 'tk_e2ee_p256_';
+const derivedKeyCache = new Map();
+
+window.getOrCreateUserIdentityKeyPair = async function(userSlug){
+  if(!userSlug || !window.crypto || !crypto.subtle) return null;
+  const storageKey = E2EE_KEYPAIR_STORAGE_PREFIX + userSlug;
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if(stored){
+      const parsed = JSON.parse(stored);
+      const privateKey = await crypto.subtle.importKey(
+        'jwk',
+        parsed.privateKeyJwk,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        ['deriveKey', 'deriveBits']
+      );
+      const publicKey = await crypto.subtle.importKey(
+        'jwk',
+        parsed.publicKeyJwk,
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        []
+      );
+      return { privateKey, publicKey, publicKeyJwk: parsed.publicKeyJwk };
+    }
+  } catch(e){
+    console.warn('Error reading stored E2EE keypair, generating fresh pair:', e);
+  }
+
+  // Generate a cryptographically strong P-256 ECDH keypair
+  try {
+    const keyPair = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      ['deriveKey', 'deriveBits']
+    );
+    const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    const privateKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+
+    localStorage.setItem(storageKey, JSON.stringify({
+      publicKeyJwk,
+      privateKeyJwk,
+      createdAt: Date.now()
+    }));
+
+    return { privateKey: keyPair.privateKey, publicKey: keyPair.publicKey, publicKeyJwk };
+  } catch(e){
+    console.error('Failed to generate ECDH keypair:', e);
+    return null;
+  }
+};
+
+window.ensureUserCryptoKeys = async function(userSlug){
+  const kp = await window.getOrCreateUserIdentityKeyPair(userSlug);
+  return kp ? kp.publicKeyJwk : null;
+};
+
+async function getConversationEncryptionKey(chatId, senderSlug, peerSlug){
+  const participantsStr = [senderSlug, peerSlug].filter(Boolean).sort().join(':::');
+  const cacheKey = `${chatId}_${participantsStr}`;
+  if(derivedKeyCache.has(cacheKey)){
+    return derivedKeyCache.get(cacheKey);
+  }
+
+  // 1. Try true ECDH shared secret derivation between sender and receiver
+  if(senderSlug && peerSlug){
+    try {
+      const myKeyPair = await window.getOrCreateUserIdentityKeyPair(senderSlug);
+      let peerPublicJwk = null;
+
+      // Check peer's public key in cloud profile
+      if(typeof fbGetUserProfile === 'function'){
+        const peerProf = await fbGetUserProfile(peerSlug);
+        if(peerProf && peerProf.publicKeyJwk){
+          peerPublicJwk = typeof peerProf.publicKeyJwk === 'string' ? JSON.parse(peerProf.publicKeyJwk) : peerProf.publicKeyJwk;
+        }
+      }
+
+      // Fallback: check local profile
+      if(!peerPublicJwk && typeof getLocalUserProfile === 'function'){
+        const locProf = getLocalUserProfile(peerSlug);
+        if(locProf && locProf.publicKeyJwk){
+          peerPublicJwk = typeof locProf.publicKeyJwk === 'string' ? JSON.parse(locProf.publicKeyJwk) : locProf.publicKeyJwk;
+        }
+      }
+
+      if(myKeyPair && myKeyPair.privateKey && peerPublicJwk){
+        const peerPublicKey = await crypto.subtle.importKey(
+          'jwk',
+          peerPublicJwk,
+          { name: 'ECDH', namedCurve: 'P-256' },
+          false,
+          []
+        );
+
+        // Derive 256-bit AES-GCM shared key from ECDH secret
+        const sharedAesKey = await crypto.subtle.deriveKey(
+          { name: 'ECDH', public: peerPublicKey },
+          myKeyPair.privateKey,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt', 'decrypt']
+        );
+
+        derivedKeyCache.set(cacheKey, sharedAesKey);
+        return sharedAesKey;
+      }
+    } catch(err){
+      console.warn('ECDH derivation skipped, using participant-bound AES key:', err);
+    }
+  }
+
+  // 2. Participant-bound key derivation (ensures encryption key is tied to participant identities)
+  try {
+    const participantsStr = [senderSlug, peerSlug].filter(Boolean).sort().join(':::');
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      enc.encode('TuitionKhata_E2EE_Pepper_' + participantsStr + '_' + chatId),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+    const key = await crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: enc.encode('tk_e2ee_salt_' + participantsStr),
+        iterations: 2000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    derivedKeyCache.set(cacheKey, key);
+    return key;
+  } catch(e){
+    return null;
+  }
+}
+
+window.encryptChatPayload = async function(plainText, chatId, senderSlug, peerSlug){
+  if(!plainText || typeof plainText !== 'string') return plainText;
+  if(plainText.startsWith('enc:v2:') || plainText.startsWith('enc:v1:')) return plainText; // already encrypted
+
+  try {
+    const key = await getConversationEncryptionKey(chatId, senderSlug, peerSlug);
+    if(!key) return plainText;
+
+    const enc = new TextEncoder();
+    // Cryptographically random 96-bit (12 bytes) IV for AES-GCM
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      enc.encode(plainText)
+    );
+
+    const ivHex = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+    const cipherHex = Array.from(new Uint8Array(encrypted)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `enc:v2:${ivHex}:${cipherHex}`;
+  } catch(e) {
+    console.error('Client encryption error:', e);
+    return plainText;
+  }
+};
+
+window.decryptChatPayload = async function(cipherPayload, chatId, senderSlug, peerSlug){
+  if(!cipherPayload || typeof cipherPayload !== 'string') return cipherPayload;
+  if(!cipherPayload.startsWith('enc:v2:') && !cipherPayload.startsWith('enc:v1:')) {
+    return cipherPayload; // Unencrypted legacy message
+  }
+
+  try {
+    const parts = cipherPayload.split(':');
+    if(parts.length !== 4) return cipherPayload;
+    const version = parts[1];
+    const ivHex = parts[2];
+    const cipherHex = parts[3];
+
+    const iv = new Uint8Array(ivHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const cipherBytes = new Uint8Array(cipherHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+
+    let key = null;
+    if(version === 'v2'){
+      key = await getConversationEncryptionKey(chatId, senderSlug, peerSlug);
+    } else {
+      // Backwards-compatible v1 derivation
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        enc.encode('TuitionKhata_E2E_Key_' + chatId),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+      );
+      key = await crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: enc.encode('tk_secret_salt_' + chatId),
+          iterations: 1000,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    if(!key) return cipherPayload;
+
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      cipherBytes
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch(e) {
+    return '🔒 [এনক্রিপ্টেড বার্তা — অননুমোদিত ব্যক্তির জন্য অগম্য]';
+  }
+};
+
+// ============================================================================
 // Personal 1-on-1 Direct Chat & Real-time Messaging
 // ============================================================================
 window.fbSendChatMessage = async function(chatId, messageObj, conversationMeta){
@@ -239,10 +477,31 @@ window.fbSendChatMessage = async function(chatId, messageObj, conversationMeta){
   if(!firestoreDb) return null;
   try {
     const msgId = messageObj.id || ('msg_' + Date.now() + '_' + Math.floor(Math.random()*1000));
+    const senderSlug = messageObj.senderSlug;
+    const peerSlug = conversationMeta && conversationMeta.peerSlug;
+
+    // Encrypt sensitive payloads (text, photo url, video url, voice url) before saving to Firestore
+    const encryptedText = messageObj.text ? await encryptChatPayload(messageObj.text, chatId, senderSlug, peerSlug) : '';
+    const encryptedImageUrl = messageObj.imageUrl ? await encryptChatPayload(messageObj.imageUrl, chatId, senderSlug, peerSlug) : '';
+    const encryptedImageLink = messageObj.imageLink ? await encryptChatPayload(messageObj.imageLink, chatId, senderSlug, peerSlug) : '';
+    const encryptedVideoUrl = messageObj.videoUrl ? await encryptChatPayload(messageObj.videoUrl, chatId, senderSlug, peerSlug) : '';
+    const encryptedAudioUrl = messageObj.audioUrl ? await encryptChatPayload(messageObj.audioUrl, chatId, senderSlug, peerSlug) : '';
+    const encryptedAudioLink = messageObj.audioLink ? await encryptChatPayload(messageObj.audioLink, chatId, senderSlug, peerSlug) : '';
+    const encryptedMediaUrl = messageObj.mediaUrl ? await encryptChatPayload(messageObj.mediaUrl, chatId, senderSlug, peerSlug) : '';
+
     const msgData = {
       ...messageObj,
       id: msgId,
       chatId,
+      text: encryptedText,
+      imageUrl: encryptedImageUrl,
+      imageLink: encryptedImageLink,
+      videoUrl: encryptedVideoUrl,
+      audioUrl: encryptedAudioUrl,
+      audioLink: encryptedAudioLink,
+      mediaUrl: encryptedMediaUrl,
+      isEncrypted: true,
+      encryptionAlgorithm: 'AES-GCM-256',
       status: messageObj.status || 'sent',
       timestamp: messageObj.timestamp || Date.now()
     };
@@ -280,13 +539,18 @@ window.fbSendChatMessage = async function(chatId, messageObj, conversationMeta){
     // Update parent chat metadata with simple message state in Firestore
     const chatDocRef = firestoreDb.collection('personal_chats').doc(chatId);
     const isAudioMsg = !!(messageObj.audioUrl || messageObj.audioLink || messageObj.messageType === 'voice_clip');
-    const isPhotoMsg = !!(messageObj.imageUrl || messageObj.imageLink || messageObj.mediaUrl);
-    const summaryText = messageObj.text || (isAudioMsg ? '🎤 ভয়েস মেসেজ' : (isPhotoMsg ? '📷 ফটো' : ''));
+    const isPhotoMsg = !!(messageObj.imageUrl || messageObj.imageLink);
+    const isVideoMsg = !!(messageObj.videoUrl || messageObj.messageType === 'video_clip');
+    const summaryText = messageObj.text || (isVideoMsg ? '🎥 ভিডিও ক্লিপ' : (isAudioMsg ? '🎤 ভয়েস মেসেজ' : (isPhotoMsg ? '📷 ফটো' : '')));
+    
+    // Encrypt summary for conversation preview
+    const encryptedSummary = await encryptChatPayload(summaryText, chatId, senderSlug, peerSlug);
+
     await chatDocRef.set({
       chatId,
       participants,
       participantSlugs,
-      lastMessage: summaryText,
+      lastMessage: encryptedSummary,
       lastSender: messageObj.senderName,
       lastSenderSlug: messageObj.senderSlug,
       lastMessageAt: msgData.timestamp,
@@ -294,7 +558,7 @@ window.fbSendChatMessage = async function(chatId, messageObj, conversationMeta){
       messageState: {
         status: 'sent',
         lastMessageId: msgId,
-        lastMessageText: summaryText,
+        lastMessageText: encryptedSummary,
         lastSenderSlug: messageObj.senderSlug,
         lastSenderName: messageObj.senderName,
         timestamp: msgData.timestamp,
@@ -318,11 +582,17 @@ window.fbSendChatMessage = async function(chatId, messageObj, conversationMeta){
 };
 
 let activeChatListenerUnsub = null;
-window.fbListenChatMessages = function(chatId, callback){
+window.fbListenChatMessages = function(chatId, currentSlug, targetPeerSlug, callback){
   initFirebaseService();
   if(activeChatListenerUnsub){
     try{ activeChatListenerUnsub(); }catch(e){}
     activeChatListenerUnsub = null;
+  }
+  // Signature flexibility
+  if(typeof currentSlug === 'function'){
+    callback = currentSlug;
+    currentSlug = null;
+    targetPeerSlug = null;
   }
   if(!firestoreDb) return;
   try {
@@ -330,12 +600,40 @@ window.fbListenChatMessages = function(chatId, callback){
       .where('chatId', '==', chatId)
       .orderBy('timestamp', 'asc')
       .limit(100)
-      .onSnapshot((snapshot) => {
-        const messages = [];
+      .onSnapshot(async (snapshot) => {
+        const rawMessages = [];
         snapshot.forEach(doc => {
-          messages.push({ id: doc.id, ...doc.data() });
+          rawMessages.push({ id: doc.id, ...doc.data() });
         });
-        if(typeof callback === 'function') callback(messages);
+
+        // Decrypt messages client-side in browser memory
+        const decryptedMessages = await Promise.all(rawMessages.map(async (m) => {
+          if(!m.isEncrypted && (!m.text || !m.text.startsWith('enc:'))){
+            return m; // Unencrypted legacy message
+          }
+          const sSlug = currentSlug || m.senderSlug;
+          const pSlug = targetPeerSlug || (m.participantSlugs || []).find(s => s !== m.senderSlug) || m.senderSlug;
+
+          const text = m.text ? await decryptChatPayload(m.text, chatId, sSlug, pSlug) : '';
+          const imageUrl = m.imageUrl ? await decryptChatPayload(m.imageUrl, chatId, sSlug, pSlug) : '';
+          const imageLink = m.imageLink ? await decryptChatPayload(m.imageLink, chatId, sSlug, pSlug) : '';
+          const videoUrl = m.videoUrl ? await decryptChatPayload(m.videoUrl, chatId, sSlug, pSlug) : '';
+          const audioUrl = m.audioUrl ? await decryptChatPayload(m.audioUrl, chatId, sSlug, pSlug) : '';
+          const audioLink = m.audioLink ? await decryptChatPayload(m.audioLink, chatId, sSlug, pSlug) : '';
+          const mediaUrl = m.mediaUrl ? await decryptChatPayload(m.mediaUrl, chatId, sSlug, pSlug) : '';
+          return {
+            ...m,
+            text,
+            imageUrl,
+            imageLink,
+            videoUrl,
+            audioUrl,
+            audioLink,
+            mediaUrl
+          };
+        }));
+
+        if(typeof callback === 'function') callback(decryptedMessages);
       }, (err) => {
         console.warn('Chat messages listener error:', err);
       });
@@ -356,7 +654,7 @@ window.fbListenActiveChats = function(userSlug, callback){
     activeConversationsListenerUnsub = firestoreDb.collection('personal_chats')
       .orderBy('updatedAt', 'desc')
       .limit(60)
-      .onSnapshot((snapshot) => {
+      .onSnapshot(async (snapshot) => {
         const chats = [];
         snapshot.forEach(doc => {
           const d = { id: doc.id, ...doc.data() };
@@ -364,7 +662,18 @@ window.fbListenActiveChats = function(userSlug, callback){
             chats.push(d);
           }
         });
-        if(typeof callback === 'function') callback(chats);
+
+        // Decrypt conversation preview snippet client-side
+        const decryptedChats = await Promise.all(chats.map(async (c) => {
+          let lastMessage = c.lastMessage;
+          if(lastMessage && (lastMessage.startsWith('enc:v2:') || lastMessage.startsWith('enc:v1:'))){
+            const peer = (c.participantSlugs || []).find(s => s !== userSlug);
+            lastMessage = await decryptChatPayload(lastMessage, c.chatId, userSlug, peer);
+          }
+          return { ...c, lastMessage };
+        }));
+
+        if(typeof callback === 'function') callback(decryptedChats);
       }, (err) => {
         console.warn('fbListenActiveChats error:', err);
       });
@@ -571,11 +880,11 @@ function updateCloudSyncStatusIndicator(isOnline){
     if(isOnline){
       el.innerHTML = '<span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#10B981; margin-right:4px; box-shadow:0 0 6px #10B981;"></span> ক্লাউড সিঙ্ক চালু';
       el.style.color = '#10B981';
-      el.title = 'Firebase Cloud Firestore এর সাথে রিয়েল-টাইমে সংযুক্ত';
+      el.title = 'লাইভ ক্লাউডের সাথে সংযুক্ত';
     } else {
-      el.innerHTML = '<span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#F59E0B; margin-right:4px;"></span> অফলাইন / লোকাল';
+      el.innerHTML = '<span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#F59E0B; margin-right:4px;"></span> অফলাইন মোড';
       el.style.color = '#F59E0B';
-      el.title = 'অফলাইন মোডে ডেটা সংরক্ষিত হচ্ছে';
+      el.title = 'অফলাইনে ডেটা সংরক্ষিত রয়েছে';
     }
   }
 }

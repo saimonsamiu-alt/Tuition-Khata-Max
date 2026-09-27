@@ -10,6 +10,7 @@
         "institution": { "type": "string", "required": false },
         "isVerified": { "type": "boolean", "required": true },
         "badge": { "type": "string", "required": false },
+        "publicKeyJwk": { "type": "string", "required": false },
         "isPrivateStudent": { "type": "boolean", "required": true },
         "createdAt": { "type": "number", "required": true }
       }
@@ -43,10 +44,12 @@
         "imageUrl": { "type": "string", "required": false },
         "imageLink": { "type": "string", "required": false },
         "mediaUrl": { "type": "string", "required": false },
+        "videoUrl": { "type": "string", "required": false },
         "audioUrl": { "type": "string", "required": false },
         "audioLink": { "type": "string", "required": false },
         "audioDuration": { "type": "number", "required": false },
         "messageType": { "type": "string", "required": false },
+        "isEncrypted": { "type": "boolean", "required": false },
         "timestamp": { "type": "number", "required": true },
         "status": { "type": "string", "required": false },
         "isRead": { "type": "boolean", "required": false },

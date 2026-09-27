@@ -152,6 +152,7 @@ function render(){
   else if(s==='studentDashboard') renderStudentDashboard();
   else if(s==='teacherRegCodes') renderTeacherRegCodes();
   else if(s==='teacherBattleAudit') renderTeacherBattleAudit();
+  else if(s==='teacherSecurityDashboard') renderTeacherSecurityDashboard();
   else if(s==='battleWorldMap') renderBattleWorldMap();
   else if(s==='battleChapterSelect') renderBattleChapterSelect(state.courseId, state.subject, state.title);
   else if(s==='teacherGate') renderTeacherGate();

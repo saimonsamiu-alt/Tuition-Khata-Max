@@ -151,21 +151,32 @@ function getAuthorBadge(item){
   return '<span class="badge-public-stud" title="উন্মুক্ত সাধারণ শিক্ষার্থী">🧑‍🎓 সাধারণ শিক্ষার্থী</span>';
 }
 
+let _memCommunityPosts = null;
+window.invalidateCommunityPostsCache = function(newPosts){
+  _memCommunityPosts = (newPosts && Array.isArray(newPosts)) ? newPosts : null;
+};
+
 function getCommunityPosts(){
+  if(_memCommunityPosts && Array.isArray(_memCommunityPosts)){
+    return _memCommunityPosts;
+  }
   try{
     const raw = localStorage.getItem(COMMUNITY_STORAGE_KEY);
     if(!raw){
+      _memCommunityPosts = DEFAULT_COMMUNITY_POSTS;
       localStorage.setItem(COMMUNITY_STORAGE_KEY, JSON.stringify(DEFAULT_COMMUNITY_POSTS));
-      return DEFAULT_COMMUNITY_POSTS;
+      return _memCommunityPosts;
     }
     const posts = JSON.parse(raw);
-    return Array.isArray(posts) ? posts : DEFAULT_COMMUNITY_POSTS;
+    _memCommunityPosts = Array.isArray(posts) ? posts : DEFAULT_COMMUNITY_POSTS;
+    return _memCommunityPosts;
   }catch(e){
     return DEFAULT_COMMUNITY_POSTS;
   }
 }
 
 function saveCommunityPosts(posts){
+  _memCommunityPosts = posts;
   try{
     localStorage.setItem(COMMUNITY_STORAGE_KEY, JSON.stringify(posts));
   }catch(e){
@@ -173,21 +184,28 @@ function saveCommunityPosts(posts){
   }
 }
 
+let _memStudyStories = null;
 function getStudyStories(){
+  if(_memStudyStories && Array.isArray(_memStudyStories)){
+    return _memStudyStories;
+  }
   try{
     const raw = localStorage.getItem(STORIES_STORAGE_KEY);
     if(!raw){
+      _memStudyStories = DEFAULT_STUDY_STORIES;
       localStorage.setItem(STORIES_STORAGE_KEY, JSON.stringify(DEFAULT_STUDY_STORIES));
-      return DEFAULT_STUDY_STORIES;
+      return _memStudyStories;
     }
     const stories = JSON.parse(raw);
-    return Array.isArray(stories) ? stories : DEFAULT_STUDY_STORIES;
+    _memStudyStories = Array.isArray(stories) ? stories : DEFAULT_STUDY_STORIES;
+    return _memStudyStories;
   }catch(e){
     return DEFAULT_STUDY_STORIES;
   }
 }
 
 function saveStudyStories(stories){
+  _memStudyStories = stories;
   try{
     localStorage.setItem(STORIES_STORAGE_KEY, JSON.stringify(stories));
   }catch(e){
@@ -1237,7 +1255,7 @@ window.deleteCommunityPost = function(postId){
   updateCommunityFeedLive();
 };
 
-window.openPostDetailModal = function(postId){
+window.openPostDetailModal = function(postId, options = {}){
   const posts = getCommunityPosts();
   const post = posts.find(p => p.id === postId);
   if(!post) return;
@@ -1260,23 +1278,30 @@ window.openPostDetailModal = function(postId){
   const isHearted = !!myReactions.heart;
   const isSaved = isPostSaved(post.id);
   const comments = post.comments || [];
+  const activeMe = (typeof getCurrentUserIdentity === 'function')
+    ? getCurrentUserIdentity()
+    : { name: (getLoggedStudent() ? getLoggedStudent().name : (localStorage.getItem('tuition_guest_author_name') || 'সাধারণ শিক্ষার্থী')), slug: 'guest', avatar: '🧑‍🎓' };
 
   const commentsHtml = comments.length === 0 ? `
     <div style="font-size:12.5px; color:var(--pencil); padding:10px 0; font-style:italic; text-align:center;">
       এখনো কোনো মন্তব্য নেই। প্রথম উত্তরটি তুমিই লিখো!
     </div>
   ` : comments.map(c => `
-    <div style="background:var(--paper); border-radius:9px; padding:9px 12px; margin-bottom:8px; font-size:13.5px; border:1px solid var(--paper-edge);">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-        <div style="display:flex; align-items:center; gap:6px;">
-          <b style="font-size:13px; color:var(--ink);">${escapeHtml(c.authorName)}</b>
+    <div id="detail_comment_${c.id}" style="background:var(--paper); border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:13.5px; border:1px solid var(--paper-edge); transition:all 0.3s ease;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
+        <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+          <div style="width:24px; height:24px; border-radius:50%; background:rgba(37,99,235,0.1); display:inline-flex; align-items:center; justify-content:center; font-size:13px; border:1px solid var(--paper-edge); cursor:pointer;" onclick="if(typeof openUserProfileModal==='function') openUserProfileModal('${escapeHtml(c.authorSlug || slugify(c.authorName))}', '${escapeHtml(c.authorName)}')">
+            ${c.authorAvatar || (c.isTeacher ? '👨‍🏫' : (c.isPrivateStudent ? '🎓' : '🧑‍🎓'))}
+          </div>
+          <b style="font-size:13px; color:var(--ink); cursor:pointer;" onclick="if(typeof openUserProfileModal==='function') openUserProfileModal('${escapeHtml(c.authorSlug || slugify(c.authorName))}', '${escapeHtml(c.authorName)}')">${escapeHtml(c.authorName)}</b>
           ${getAuthorBadge(c)}
+          <button class="reaction-btn" style="padding:1px 6px; font-size:10px; border-radius:6px;" onclick="if(typeof openDirectChat==='function') openDirectChat('${escapeHtml(c.authorSlug || slugify(c.authorName))}', '${escapeHtml(c.authorName)}')">💬 চ্যাট</button>
         </div>
         <span style="font-size:11px; color:var(--pencil);">${formatTimeAgo(c.timestamp)}</span>
       </div>
-      <div style="color:var(--ink); line-height:1.45;">${linkifyText(c.text)}</div>
+      <div style="color:var(--ink); line-height:1.45; word-break:break-word; padding-left:31px;">${linkifyText(c.text)}</div>
       ${c.isBestAnswer ? `
-        <div style="margin-top:4px; font-size:11.5px; color:var(--green); font-weight:700;">
+        <div style="margin-top:6px; font-size:11.5px; color:var(--green); font-weight:700; padding-left:31px;">
           ⭐ সেরা সমাধান হিসেবে স্বীকৃত
         </div>
       ` : ''}
@@ -1298,7 +1323,7 @@ window.openPostDetailModal = function(postId){
         <button class="reaction-btn" style="padding:4px 9px;" onclick="document.getElementById('postDetailModalOverlay').remove()">✕</button>
       </div>
 
-      <div class="community-modal-body" style="padding:16px; max-height:65vh; overflow-y:auto;">
+      <div class="community-modal-body" id="postDetailModalBody" style="padding:16px; max-height:65vh; overflow-y:auto; scroll-behavior:smooth;">
         ${post.mediaUrl ? `
           <div style="margin:-16px -16px 14px -16px; background:#0F172A; text-align:center;">
             <img src="${post.mediaUrl}" style="max-height:300px; width:100%; object-fit:contain;">
@@ -1324,25 +1349,53 @@ window.openPostDetailModal = function(postId){
             </button>
           </div>
           <button class="insta-save-btn ${isSaved ? 'saved' : ''}" onclick="toggleSavePost('${post.id}'); openPostDetailModal('${post.id}');">
-            <span>${isSaved ? '🔖' : '📑'}</span>
+              <span>${isSaved ? '🔖' : '📑'}</span>
           </button>
         </div>
 
-        <h4 style="margin:10px 0 8px; font-size:13.5px; color:var(--ink);">সহপাঠীদের আলোচনা (${comments.length})</h4>
-        <div style="margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin:10px 0 8px;">
+          <h4 style="margin:0; font-size:13.5px; color:var(--ink);">সহপাঠীদের আলোচনা (${comments.length})</h4>
+          <span style="font-size:11px; color:var(--gold); font-weight:700;">✨ নতুন মন্তব্য স্বয়ংক্রিয়ভাবে নিচে দৃশ্যমান হবে</span>
+        </div>
+
+        <div id="postDetailCommentsContainer" style="margin-bottom:14px;">
           ${commentsHtml}
         </div>
 
-        <!-- Add Comment in Modal -->
-        <div style="display:flex; gap:6px; align-items:center;">
-          <input type="text" id="detail_comment_input" placeholder="মন্তব্য বা সমাধান লিখুন..." style="margin-bottom:0; font-size:13px; padding:8px 12px; flex:1;" onkeydown="if(event.key==='Enter'){ submitPostComment('${post.id}'); setTimeout(()=>openPostDetailModal('${post.id}'), 200); }">
-          <button class="btn btn-gold" style="padding:8px 16px; font-size:13px; font-weight:700;" onclick="submitPostComment('${post.id}'); setTimeout(()=>openPostDetailModal('${post.id}'), 200);">পাঠাও</button>
+        <!-- Add Comment in Modal (Facebook / Instagram Style with Auto Name & Avatar) -->
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+          <div style="width:32px; height:32px; border-radius:50%; background:var(--paper); border:1.5px solid var(--paper-edge); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; cursor:pointer;" onclick="promptChangeCommenterName()" title="${escapeHtml(activeMe.name)} হিসেবে মন্তব্য করছেন (নাম পরিবর্তন করতে ক্লিক করুন)">
+            ${activeMe.avatar || (isTeacherPost ? '👨‍🏫' : '🧑‍🎓')}
+          </div>
+          <input type="text" id="detail_comment_input" placeholder="${escapeHtml(activeMe.name)} হিসেবে মন্তব্য বা সমাধান লিখুন..." style="margin-bottom:0; font-size:13px; padding:8px 12px; flex:1; border-radius:18px; border:1px solid var(--paper-edge); background:var(--paper); color:var(--ink);" onkeydown="if(event.key==='Enter'){ submitPostComment('${post.id}', true); }">
+          <button class="btn btn-gold" style="padding:8px 16px; font-size:13px; font-weight:700; border-radius:18px; flex-shrink:0;" onclick="submitPostComment('${post.id}', true);">পাঠাও</button>
         </div>
       </div>
     </div>
   `;
 
   document.body.appendChild(overlay);
+
+  // Auto-scroll to bottom of modal when requested (e.g. newly posted comment)
+  const shouldScroll = (typeof options === 'boolean' && options) || (options && options.scrollToBottom);
+  if(shouldScroll){
+    requestAnimationFrame(() => {
+      const modalBody = document.getElementById('postDetailModalBody');
+      if(modalBody){
+        modalBody.scrollTo({ top: modalBody.scrollHeight, behavior: 'smooth' });
+        setTimeout(() => { if(modalBody) modalBody.scrollTop = modalBody.scrollHeight; }, 80);
+        setTimeout(() => { if(modalBody) modalBody.scrollTop = modalBody.scrollHeight; }, 220);
+      }
+      const highlightId = options && options.highlightId;
+      if(highlightId){
+        const el = document.getElementById('detail_comment_' + highlightId);
+        if(el){
+          el.classList.add('new-comment-pulse');
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    });
+  }
 };
 
 function renderCommunityPostsListHtml(filteredPosts, stud, isTeacher){
@@ -1460,6 +1513,10 @@ function renderCommunityPostsListHtml(filteredPosts, stud, isTeacher){
   }
 
   // 4. Standard Instagram-Style Social Feed Cards
+  const activeMe = (typeof getCurrentUserIdentity === 'function')
+    ? getCurrentUserIdentity()
+    : { name: (stud ? stud.name : (localStorage.getItem('tuition_guest_author_name') || 'সাধারণ শিক্ষার্থী')), slug: 'guest', avatar: '🧑‍🎓' };
+
   return filteredPosts.map(post => {
     const isTeacherPost = post.isTeacher;
     const timeAgo = formatTimeAgo(post.timestamp);
@@ -1476,17 +1533,20 @@ function renderCommunityPostsListHtml(filteredPosts, stud, isTeacher){
         এখনো কোনো মন্তব্য নেই। প্রথম উত্তরটি তুমিই লিখো!
       </div>
     ` : comments.map(c => `
-      <div style="background:var(--paper); border-radius:8px; padding:8px 10px; margin-top:6px; font-size:13px; border:1px solid var(--paper-edge);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; flex-wrap:wrap; gap:4px;">
+      <div id="comment_item_${c.id}" class="comment-item-card" style="background:var(--paper); border-radius:10px; padding:8px 12px; margin-top:6px; font-size:13px; border:1px solid var(--paper-edge); transition:all 0.3s ease;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; flex-wrap:wrap; gap:4px;">
           <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <div style="width:24px; height:24px; border-radius:50%; background:rgba(37,99,235,0.1); display:inline-flex; align-items:center; justify-content:center; font-size:13px; border:1px solid var(--paper-edge); cursor:pointer;" onclick="if(typeof openUserProfileModal==='function') openUserProfileModal('${escapeHtml(c.authorSlug || slugify(c.authorName))}', '${escapeHtml(c.authorName)}')">
+              ${c.authorAvatar || (c.isTeacher ? '👨‍🏫' : (c.isPrivateStudent ? '🎓' : '🧑‍🎓'))}
+            </div>
             <b style="color:var(--ink); font-size:12.5px; cursor:pointer;" onclick="if(typeof openUserProfileModal==='function') openUserProfileModal('${escapeHtml(c.authorSlug || slugify(c.authorName))}', '${escapeHtml(c.authorName)}')">${escapeHtml(c.authorName)}</b>
             ${getAuthorBadge(c)}
             <button class="reaction-btn" style="padding:1px 6px; font-size:10px; border-radius:6px;" onclick="if(typeof openDirectChat==='function') openDirectChat('${escapeHtml(c.authorSlug || slugify(c.authorName))}', '${escapeHtml(c.authorName)}')">💬 চ্যাট</button>
           </div>
           <span style="font-size:10.5px; color:var(--pencil);">${formatTimeAgo(c.timestamp)}</span>
         </div>
-        <div style="color:var(--ink); line-height:1.4; word-break:break-word;">${linkifyText(c.text)}</div>
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px; flex-wrap:wrap; gap:4px;">
+        <div style="color:var(--ink); line-height:1.45; word-break:break-word; padding-left:30px;">${linkifyText(c.text)}</div>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px; flex-wrap:wrap; gap:4px; padding-left:30px;">
           ${c.isBestAnswer ? `
             <span style="font-size:11px; color:var(--green); font-weight:700; display:inline-flex; align-items:center; gap:4px; background:rgba(47,125,90,0.1); padding:2px 8px; border-radius:10px;">
               ⭐ সেরা সমাধান
@@ -1578,13 +1638,16 @@ function renderCommunityPostsListHtml(filteredPosts, stud, isTeacher){
           ${commentsHtml}
         </div>
 
-        <!-- Add Comment Input Bar -->
-        <div class="insta-comment-input-row">
-          ${(!stud && !isTeacher) ? `
-            <input type="text" id="comment_author_${post.id}" placeholder="নাম" value="${escapeHtml(localStorage.getItem('tuition_guest_author_name')||'')}" style="width:90px; margin-bottom:0; font-size:12px; padding:7px 8px; border-radius:18px;">
-          ` : ''}
-          <input type="text" id="comment_input_${post.id}" placeholder="একটি গঠনমূলক সমাধান বা মন্তব্য লিখুন..." style="flex:1; min-width:120px; margin-bottom:0; font-size:12.5px; padding:7px 12px; border-radius:18px;" onkeydown="if(event.key==='Enter') submitPostComment('${post.id}')">
-          <button class="btn btn-gold" style="padding:7px 14px; font-size:12px; font-weight:700; border-radius:18px;" onclick="submitPostComment('${post.id}')">পাঠাও</button>
+        <!-- Add Comment Input Bar (Facebook / Instagram Style with Auto Name & Avatar) -->
+        <div class="insta-comment-input-row" style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+          <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="promptChangeCommenterName()" title="মন্তব্যকারীর নাম বা পরিচয় পরিবর্তন করতে ক্লিক করুন">
+            <div style="width:30px; height:30px; border-radius:50%; background:var(--paper); border:1.5px solid var(--paper-edge); display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0;">
+              ${activeMe.avatar || (isTeacher ? '👨‍🏫' : (stud ? '🎓' : '🧑‍🎓'))}
+            </div>
+            <span style="font-size:11px; font-weight:700; color:var(--ink); max-width:85px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(activeMe.name)}</span>
+          </div>
+          <input type="text" id="comment_input_${post.id}" placeholder="${escapeHtml(activeMe.name)} হিসেবে মন্তব্য লিখুন..." style="flex:1; min-width:110px; margin-bottom:0; font-size:12.5px; padding:7px 12px; border-radius:18px; border:1px solid var(--paper-edge); background:var(--paper); color:var(--ink);" onkeydown="if(event.key==='Enter') submitPostComment('${post.id}')">
+          <button class="btn btn-gold" style="padding:7px 14px; font-size:12px; font-weight:700; border-radius:18px; flex-shrink:0;" onclick="submitPostComment('${post.id}')">পাঠাও</button>
         </div>
       </div>
     `;
@@ -1838,6 +1901,17 @@ window.togglePostReaction = function(postId, reactionType){
   updateCommunityFeedLive();
 };
 
+window.promptChangeCommenterName = function(){
+  const activeMe = (typeof getCurrentUserIdentity === 'function') ? getCurrentUserIdentity() : {};
+  const current = localStorage.getItem('tuition_guest_author_name') || activeMe.name || '';
+  const newName = prompt('মন্তব্য প্রকাশের জন্য আপনার নাম লিখুন বা পরিবর্তন করুন:', current);
+  if(newName !== null && newName.trim()){
+    localStorage.setItem('tuition_guest_author_name', newName.trim());
+    toast(`আপনার নাম "${newName.trim()}" হিসেবে সংরক্ষিত হয়েছে!`);
+    updateCommunityFeedLive();
+  }
+};
+
 window.submitPostComment = function(postId){
   const inputEl = document.getElementById('comment_input_' + postId) || document.getElementById('detail_comment_input');
   if(!inputEl) return;
@@ -1847,24 +1921,56 @@ window.submitPostComment = function(postId){
     return;
   }
 
+  // Auto-resolve identity from active session, social profile, or storage
+  const activeMe = (typeof getCurrentUserIdentity === 'function')
+    ? getCurrentUserIdentity()
+    : { name: 'সাধারণ শিক্ষার্থী', slug: 'guest_user', avatar: '🧑‍🎓', role: 'guest', isTeacher: false, isPrivateStudent: false, isVerified: false };
+
   const stud = getLoggedStudent();
   const isTeacher = !!currentTeacher;
-  let authorName = 'সাধারণ শিক্ষার্থী';
+
+  let authorName = '';
+  let authorSlug = '';
+  let authorAvatar = '';
   let isPrivateStudent = false;
+  let isVerified = false;
 
   if(isTeacher){
-    authorName = (currentTeacher.name || 'শিক্ষক');
+    authorName = currentTeacher.name || 'শিক্ষক';
+    authorSlug = 'teacher_' + (typeof slugify === 'function' ? slugify(authorName) : 'teacher');
+    authorAvatar = '👨‍🏫';
+    isVerified = true;
   } else if(stud && stud.name){
     authorName = stud.name;
-    isPrivateStudent = true; // Logged-in private student
+    authorSlug = stud.slug || (typeof slugify === 'function' ? slugify(stud.name) : 'student');
+    authorAvatar = stud.avatar || '🎓';
+    isPrivateStudent = true;
+    isVerified = true;
+  } else if(activeMe && activeMe.name && activeMe.name !== 'সাধারণ শিক্ষার্থী'){
+    authorName = activeMe.name;
+    authorSlug = activeMe.slug || ('user_' + (typeof slugify === 'function' ? slugify(authorName) : 'guest'));
+    authorAvatar = activeMe.avatar || '🧑‍🎓';
+    isPrivateStudent = !!activeMe.isPrivateStudent;
+    isVerified = !!activeMe.isVerified;
   } else {
-    const authorEl = document.getElementById('comment_author_' + postId);
-    if(authorEl && authorEl.value.trim()){
-      authorName = authorEl.value.trim();
-      localStorage.setItem('tuition_guest_author_name', authorName);
+    const saved = localStorage.getItem('tuition_guest_author_name');
+    if(saved && saved.trim()){
+      authorName = saved.trim();
+      authorSlug = 'guest_' + (typeof slugify === 'function' ? slugify(authorName) : 'guest');
+      authorAvatar = '🧑‍🎓';
     } else {
-      const saved = localStorage.getItem('tuition_guest_author_name');
-      if(saved) authorName = saved;
+      // If user hasn't set their name yet, ask once so their real name is saved and automatically attached to all comments!
+      const entered = prompt('আপনার নাম লিখুন (যাতে মন্তব্যে আপনার নাম ও পরিচয় স্বয়ংক্রিয়ভাবে প্রকাশ পায়):', '');
+      if(entered && entered.trim()){
+        authorName = entered.trim();
+        localStorage.setItem('tuition_guest_author_name', authorName);
+        authorSlug = 'guest_' + (typeof slugify === 'function' ? slugify(authorName) : 'guest');
+        authorAvatar = '🧑‍🎓';
+      } else {
+        authorName = 'সহপাঠী শিক্ষার্থী';
+        authorSlug = 'guest_student';
+        authorAvatar = '🧑‍🎓';
+      }
     }
   }
 
@@ -1873,14 +1979,19 @@ window.submitPostComment = function(postId){
   if(!post) return;
 
   if(!post.comments) post.comments = [];
-  post.comments.push({
-    id: 'c_' + Date.now(),
+  const newCommentId = 'c_' + Date.now();
+  const newComment = {
+    id: newCommentId,
     authorName,
+    authorSlug,
+    authorAvatar: authorAvatar || (isTeacher ? '👨‍🏫' : (isPrivateStudent ? '🎓' : '🧑‍🎓')),
     isTeacher,
     isPrivateStudent,
+    isVerified,
     text,
     timestamp: Date.now()
-  });
+  };
+  post.comments.push(newComment);
 
   saveCommunityPosts(posts);
 
@@ -1889,9 +2000,31 @@ window.submitPostComment = function(postId){
     window.fbSavePost(post);
   }
 
-  toast('মন্তব্য সফলভাবে যোগ হয়েছে!');
+  // Clear comment inputs across both feed & modal
+  inputEl.value = '';
+  const feedInput = document.getElementById('comment_input_' + postId);
+  if(feedInput) feedInput.value = '';
+  const detailInp = document.getElementById('detail_comment_input');
+  if(detailInp) detailInp.value = '';
+
+  toast(`মন্তব্য সফলভাবে যোগ হয়েছে (${authorName})!`);
   if(typeof playSfx === 'function') playSfx('slash');
-  updateCommunityFeedLive();
+
+  // Auto-scroll logic: If modal is open, re-render modal and auto-scroll to the new comment at bottom
+  const modalOverlay = document.getElementById('postDetailModalOverlay');
+  if(fromDetailModal || modalOverlay){
+    openPostDetailModal(postId, { scrollToBottom: true, highlightId: newCommentId });
+  } else {
+    updateCommunityFeedLive();
+    // In feed view, auto-scroll smoothly so the latest comment is always visible
+    setTimeout(() => {
+      const commentEl = document.getElementById('comment_item_' + newCommentId) || document.getElementById('comments_box_' + postId);
+      if(commentEl){
+        commentEl.classList.add('new-comment-pulse');
+        commentEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 100);
+  }
 };
 
 function formatTimeAgo(ms){

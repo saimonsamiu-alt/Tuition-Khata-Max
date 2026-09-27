@@ -1178,3 +1178,225 @@ document.addEventListener('visibilitychange', function(){
     }
   }
 });
+
+// ================= CYBER-SECURITY & ANTI-HACK DEFENSE DASHBOARD =================
+window.renderTeacherSecurityDashboard = async function(){
+  app.innerHTML = `${header('সাইবার সিকিউরিটি সেন্টার')}<div class="card center"><div class="spinner" style="margin:20px auto;"></div>সুরক্ষা মেট্রিক্স ও সিকিউরিটি লগ লোড হচ্ছে...</div>${creditFooter()}`;
+  
+  let secData = { firewallActive: true, totalMitigated: 0, activeBansCount: 0, activeBans: [], recentIncidents: [] };
+  try {
+    const res = await fetch('/api/security/incidents', {
+      headers: { 'x-admin-token': TEACHER_PASSWORD_HASH }
+    });
+    if(res.ok) {
+      secData = await res.json();
+    }
+  } catch(e){}
+
+  const activeBansHtml = (secData.activeBans && secData.activeBans.length) ? `
+    <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:12.5px; text-align:left;">
+        <thead>
+          <tr style="background:var(--paper); border-bottom:2px solid var(--paper-edge);">
+            <th style="padding:10px 8px;">ব্যানড আইপি (IP)</th>
+            <th style="padding:10px 8px;">আক্রমণের কারণ</th>
+            <th style="padding:10px 8px;">ক্যাটাগরি</th>
+            <th style="padding:10px 8px;">আক্রমণ সংখ্যা</th>
+            <th style="padding:10px 8px;">অবশিষ্ট মেয়াদ</th>
+            <th style="padding:10px 8px;">অ্যাকশন</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${secData.activeBans.map(b => `
+            <tr style="border-bottom:1px solid var(--paper-edge);">
+              <td style="padding:10px 8px; font-family:var(--font-mono); font-weight:700; color:var(--red);">${escapeHtml(b.ip)}</td>
+              <td style="padding:10px 8px; color:var(--ink);">${escapeHtml(b.reason || 'সন্দেহজনক থ্রেট')}</td>
+              <td style="padding:10px 8px;"><span class="q-tag" style="background:#FFF1F2; color:#BE123C;">${escapeHtml(b.category || 'Threat')}</span></td>
+              <td style="padding:10px 8px; font-weight:700;">${b.attackCount || 1} বার</td>
+              <td style="padding:10px 8px; color:var(--pencil);">${typeof b.remainingMinutes === 'number' ? b.remainingMinutes + ' মিনিট' : b.remainingMinutes}</td>
+              <td style="padding:10px 8px;">
+                <button class="btn btn-outline" style="padding:3px 8px; font-size:11.5px;" onclick="unbanAttackerIp('${b.ip}')">🔓 আনব্যান</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : `<div class="empty-state" style="padding:16px;">বর্তমানে কোনো সক্রিয় আইপি ব্যান নেই — সিস্টেম সম্পূর্ণ নিরাপদ ও স্থিতিশীল।</div>`;
+
+  const incidentsHtml = (secData.recentIncidents && secData.recentIncidents.length) ? `
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      ${secData.recentIncidents.map(inc => {
+        const timeStr = new Date(inc.timestamp).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' (' + formatDate(inc.timestamp) + ')';
+        return `
+          <div style="background:var(--paper); border:1px solid var(--paper-edge); border-left:4px solid var(--red); border-radius:10px; padding:12px 14px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
+              <div>
+                <span style="background:#FFF1F2; border:1px solid #FECDD3; color:#BE123C; font-weight:700; font-size:11.5px; padding:2px 8px; border-radius:6px;">🚨 ${escapeHtml(inc.attackType)}</span>
+                <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--ink); margin-left:8px;">IP: ${escapeHtml(inc.ip)}</span>
+              </div>
+              <div style="font-size:11px; color:var(--pencil); font-family:var(--font-mono);">${timeStr}</div>
+            </div>
+            <div style="font-size:12.5px; color:var(--ink); margin-bottom:6px; word-break:break-all;">
+              <b>শনাক্তকৃত পে-লোড/পাথ:</b> <code style="background:rgba(0,0,0,0.06); padding:2px 6px; border-radius:4px; font-family:var(--font-mono);">${escapeHtml(inc.payloadSummary || inc.path || 'N/A')}</code>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11.5px; color:var(--pencil); flex-wrap:wrap; gap:6px;">
+              <div><b>ডিভাইস/এজেন্ট:</b> ${escapeHtml((inc.userAgent || 'Unknown').substring(0, 70))}</div>
+              <div><span style="color:var(--green); font-weight:700;">✓ স্বয়ংক্রিয় ব্যবস্থা:</span> ${escapeHtml(inc.actionTaken || 'Firewall Auto-Banned')}</div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  ` : `<div class="empty-state" style="padding:16px;">এখনো কোনো ক্ষতিকর আক্রমণের রেকর্ড নেই। সিস্টেম সব রিকোয়েস্ট পর্যবেক্ষণ করছে।</div>`;
+
+  app.innerHTML = `
+    ${header('সাইবার সিকিউরিটি ও হ্যাকিং প্রতিরোধ সেন্টার')}
+    
+    <div class="card" style="padding:22px; border-top:4px solid #BE123C;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
+        <div>
+          <h2 style="margin:0; font-size:18px; color:var(--ink);">🛡️ ইন্টেলিজেন্ট সাইবার ডিফেন্স ও থ্রেট প্রটেকশন (WAF / IPS)</h2>
+          <p class="hint" style="margin:4px 0 0 0;">সিস্টেম আক্রমণকারীর IP, ডিভাইস ইনফরমেশন ও পে-লোড স্বয়ংক্রিয়ভাবে শনাক্ত করে তাৎক্ষণিক প্রতিরোধমূলক ব্যবস্থা গ্রহণ করে।</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline" style="font-size:12px; padding:6px 12px;" onclick="renderTeacherSecurityDashboard()">🔄 রিফ্রেশ লগ</button>
+          <button class="btn btn-gold" style="font-size:12px; padding:6px 12px;" onclick="openManualBanModal()">➕ IP ব্যান করো</button>
+        </div>
+      </div>
+
+      <!-- Live Metric Grid -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:20px;">
+        <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:10px; padding:14px; text-align:center;">
+          <div style="font-size:24px; margin-bottom:4px;">🟢</div>
+          <div style="font-size:11.5px; color:var(--pencil); font-weight:600;">ফায়ারওয়াল স্ট্যাটাস</div>
+          <div style="font-size:14px; font-weight:700; color:var(--green); margin-top:2px;">সক্রিয় (Active WAF)</div>
+        </div>
+        <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:10px; padding:14px; text-align:center;">
+          <div style="font-size:24px; margin-bottom:4px;">🚫</div>
+          <div style="font-size:11.5px; color:var(--pencil); font-weight:600;">মোট প্রতিহত আক্রমণ</div>
+          <div style="font-size:16px; font-weight:800; color:var(--red); margin-top:2px;">${secData.totalMitigated || 0}টি প্রতিহত</div>
+        </div>
+        <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:10px; padding:14px; text-align:center;">
+          <div style="font-size:24px; margin-bottom:4px;">🔒</div>
+          <div style="font-size:11.5px; color:var(--pencil); font-weight:600;">বর্তমানে ব্যানড আইপি</div>
+          <div style="font-size:16px; font-weight:800; color:#B45309; margin-top:2px;">${secData.activeBansCount || 0}টি আইপি</div>
+        </div>
+        <div style="background:var(--paper); border:1px solid var(--paper-edge); border-radius:10px; padding:14px; text-align:center;">
+          <div style="font-size:24px; margin-bottom:4px;">🍯</div>
+          <div style="font-size:11.5px; color:var(--pencil); font-weight:600;">অটো-ডিফেন্স মোড</div>
+          <div style="font-size:14px; font-weight:700; color:var(--ink); margin-top:2px;">ইনস্ট্যান্ট অটো-লকআউট</div>
+        </div>
+      </div>
+
+      <!-- Security Capabilities Banner -->
+      <div style="background:linear-gradient(135deg, rgba(190,18,60,0.06), rgba(217,164,65,0.06)); border:1.5px solid rgba(190,18,60,0.2); border-radius:12px; padding:14px 16px; margin-bottom:20px;">
+        <h4 style="margin:0 0 8px 0; font-size:14px; color:#9F1239;">💡 কেউ হ্যাক করার চেষ্টা করলে সিস্টেম কীভাবে ব্যবস্থা নেয়?</h4>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px; font-size:12.5px; color:var(--ink); line-height:1.5;">
+          <div>
+            <b>১. আক্রমণকারীর ইনফো সংগ্রহ:</b> আক্রমণকারীর আইপি অ্যাড্রেস, ব্রাউজার/ডিভাইস ফিঙ্গারপ্রিন্ট, টাইমস্ট্যাম্প ও ক্ষতিকর ইনপুট সুনির্দিষ্টভাবে সংরক্ষণ করা হয়।
+          </div>
+          <div>
+            <b>২. স্বয়ংক্রিয় ফায়ারওয়াল ব্যান (Auto-Ban):</b> SQLi, এক্সএসএস বা সার্ভার ব্যাকডোর খোঁজার সাথে সাথে অ্যাটাকারের আইপি ১৮০ মিনিটের জন্য ব্যান হয়ে যায় (HTTP 403)।
+          </div>
+          <div>
+            <b>৩. হানিপট ট্র্যাপ (Honeypot Decoy):</b> স্বয়ংক্রিয় বট বা স্ক্র্যাপারদের জন্য অদৃশ্য ট্র্যাপ রয়েছে, যা ছোঁয়ামাত্র বট ব্লকড হয়ে যায়।
+          </div>
+          <div>
+            <b>৪. ব্রুট-ফোর্স অ্যান্টি-স্প্যাম:</b> ৫ বারের বেশি ভুল পাসওয়ার্ড দিলে অ্যাকাউন্ট সাময়িক লক হয়ে যায় এবং ডাটাবেজ স্যানিটাইজ থাকে।
+          </div>
+        </div>
+        <div style="margin-top:12px; text-align:right;">
+          <button class="btn btn-outline" style="font-size:11.5px; padding:5px 12px; border-color:#BE123C; color:#BE123C;" onclick="testSimulateAttackDefense()">🧪 টেস্ট করুন: সিমুলেটেড অ্যাটাক ডিফেন্স</button>
+        </div>
+      </div>
+
+      <!-- Active Banned IPs Section -->
+      <div style="margin-bottom:24px;">
+        <h3 style="font-size:15px; margin:0 0 10px 0; color:var(--ink); display:flex; align-items:center; gap:8px;">
+          <span>🔒 বর্তমানে ফায়ারওয়ালে ব্যান থাকা আইপি তালিকা</span>
+          <span style="font-size:11px; background:#FFF1F2; color:#BE123C; padding:2px 8px; border-radius:12px;">${secData.activeBansCount || 0}</span>
+        </h3>
+        ${activeBansHtml}
+      </div>
+
+      <!-- Recent Security Incidents Log -->
+      <div>
+        <h3 style="font-size:15px; margin:0 0 10px 0; color:var(--ink); display:flex; align-items:center; gap:8px;">
+          <span>🚨 সর্বশেষ আক্রমণ ও সিকিউরিটি ইনসিডেন্ট অডিট লগ</span>
+          <span style="font-size:11px; background:var(--paper); color:var(--pencil); padding:2px 8px; border-radius:12px;">রিয়েল-টাইম</span>
+        </h3>
+        ${incidentsHtml}
+      </div>
+
+    </div>
+
+    <div class="center" style="margin-top:16px;">
+      <a class="link-back" onclick="go('teacherDashboard')">← শিক্ষক ড্যাশবোর্ডে ফিরে যাও</a>
+    </div>
+    ${creditFooter()}
+  `;
+};
+
+window.unbanAttackerIp = async function(ip){
+  if(!confirm(`আপনি কি আইপি ${ip} কে ফায়ারওয়াল থেকে আনব্যান করতে চান?`)) return;
+  try {
+    toast('আনব্যান করা হচ্ছে...');
+    const res = await fetch('/api/security/unban-ip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': TEACHER_PASSWORD_HASH },
+      body: JSON.stringify({ ip })
+    });
+    if(res.ok){
+      toast(`আইপি ${ip} সফলভাবে আনব্যান করা হয়েছে`);
+      renderTeacherSecurityDashboard();
+    } else {
+      toast('আনব্যান ব্যর্থ হয়েছে');
+    }
+  } catch(e){
+    toast('সার্ভার যোগাযোগে ত্রুটি');
+  }
+};
+
+window.openManualBanModal = function(){
+  const ip = prompt('যে আইপি অ্যাড্রেসটি আপনি ব্যান করতে চান লিখুন (যেমন: 192.168.1.50):');
+  if(!ip || !ip.trim()) return;
+  const reason = prompt('ব্যানের কারণ (ঐচ্ছিক):', 'সন্দেহজনক কার্যকলাপ ও স্প্যামিং');
+  
+  fetch('/api/security/ban-ip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': TEACHER_PASSWORD_HASH },
+    body: JSON.stringify({ ip: ip.trim(), reason: reason || 'ম্যানুয়াল অ্যাডমিন ব্যান', durationMinutes: 1440 })
+  }).then(r => r.json()).then(res => {
+    toast(`আইপি ${ip.trim()} সফলভাবে ব্যান করা হয়েছে`);
+    renderTeacherSecurityDashboard();
+  }).catch(() => toast('ব্যান করতে সমস্যা হয়েছে'));
+};
+
+window.testSimulateAttackDefense = async function(){
+  toast('🧪 সিমুলেটেড হ্যাকিং প্রোব পাঠানো হচ্ছে...');
+  try {
+    const res = await fetch('/api/security/report-threat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        threatType: 'Simulated SQL Injection & Scanner Probe',
+        payload: "' UNION SELECT username, password FROM users --",
+        honeypotTriggered: false,
+        clientInfo: {
+          simulation: true,
+          testName: 'Teacher Security Audit Verification',
+          browser: navigator.userAgent
+        }
+      })
+    });
+    const data = await res.json();
+    if(data.status === 'defended'){
+      toast('🛡️ সফল! আক্রমণটি সিস্টেম স্বয়ংক্রিয়ভাবে শনাক্ত করেছে ও লগ করেছে।');
+      setTimeout(renderTeacherSecurityDashboard, 500);
+    }
+  } catch(e){
+    toast('সিমুলেশন ত্রুটি');
+  }
+};
+

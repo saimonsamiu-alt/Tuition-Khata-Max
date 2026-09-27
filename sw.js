@@ -5,7 +5,7 @@
 // v3: index.html now loads its JS from separate files under js/ (split for maintainability),
 // so those files are precached too. Bump this version any time index.html, sw.js, the icons,
 // or any file under js/ changes, so returning visitors get the update instead of a stale cache.
-const CACHE_NAME = 'tuition-app-v4';
+const CACHE_NAME = 'tuition-app-v8';
 const PRECACHE_ASSETS = [
   './',
   './index.html',
@@ -27,6 +27,10 @@ const PRECACHE_ASSETS = [
   './auth.js',
   './withdrawals.js',
   './render.js',
+  './community.js',
+  './socialChat.js',
+  './firebaseClient.js',
+  './keyboardNav.js'
 ];
 
 self.addEventListener('install', event => {

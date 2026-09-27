@@ -8,9 +8,10 @@
 
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
-const TEACHER_PASSWORD = '2734';
-const STUDENT_PASSWORD = '1234';
-const NOTES_PASSWORD = '0987';
+// Cryptographically Salted Master Hashes (Zero plaintext password in frontend source)
+const TEACHER_PASSWORD_HASH = 'e5170ec0a51622c2f9fbc1a1498acaa560b501ef2a0835d125364d257d1ddf03';
+const NOTES_PASSWORD_HASH = '530f672134e792e74cc9ed5d639b41d3da47d728d058ac0801b6b8ec5dc36d7f';
+const STUDENT_PASSWORD = '1234'; // Public exam access pin
 const MASTERY_PASS_PERCENT = 80;
 // [NEW] Monthly class days / remaining / extra feature (dashboard summary + teacher plan card).
 // OFF for now. Change to true to switch it on (the server side in Code.gs is already in place).
@@ -128,21 +129,23 @@ async function getRemoteResults(code) {
 
 function renderAllMath(elem){
   const target = elem || document.getElementById('app') || document.body;
-  if(window.renderMathInElement && target){
-    try{
-      renderMathInElement(target, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '$', right: '$', display: false },
-          { left: '\\(', right: '\\)', display: false },
-          { left: '\\[', right: '\\]', display: true }
-        ],
-        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
-        throwOnError: false
-      });
-    }catch(e){
-      console.warn('KaTeX render error:', e);
-    }
+  if(!target || !window.renderMathInElement) return;
+  // Fast path: skip expensive recursive DOM-tree traversal if no math notation exists
+  const text = target.textContent || '';
+  if(!text.includes('$') && !text.includes('\\(') && !text.includes('\\[')) return;
+  try{
+    renderMathInElement(target, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true }
+      ],
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+      throwOnError: false
+    });
+  }catch(e){
+    console.warn('KaTeX render error:', e);
   }
 }
 
@@ -169,13 +172,105 @@ window.installPwa = async function(){
     deferredPwaPrompt = null;
     return;
   }
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  if(isIOS){
-    if(typeof showIosInstallGuide === 'function') showIosInstallGuide();
-    else toast('Safari ব্রাউজারের নিচে Share বাটন চেপে Add to Home Screen করুন');
-  } else {
-    toast('ইনস্টল করতে ব্রাউজারের থ্রি-ডট (⋮) মেন্যু থেকে "Install app" বা "Add to Home Screen" চাপুন');
-  }
+  showAndroidChromeInstallGuide();
+};
+
+let currentInstallGuideTab = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream ? 'ios' : 'android';
+
+window.setInstallGuideTab = function(tab){
+  currentInstallGuideTab = tab;
+  showAndroidChromeInstallGuide();
+};
+
+window.showAndroidChromeInstallGuide = function(){
+  const old = document.getElementById('androidPwaModalOverlay');
+  if(old) old.remove();
+
+  const isIOS = currentInstallGuideTab === 'ios';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'androidPwaModalOverlay';
+  overlay.className = 'about-overlay';
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+
+  overlay.innerHTML = `
+    <div class="about-card" style="max-width:440px; text-align:start; padding:22px 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:26px;">📲</span>
+          <div>
+            <h3 style="margin:0; font-size:16px; color:var(--ink);">অ্যাপ ইনস্টল নির্দেশিকা</h3>
+            <span style="font-size:11.5px; color:var(--pencil);">প্লে-স্টোর বা অ্যাপ স্টোর ছাড়া সরাসরি ফোনে ইনস্টল</span>
+          </div>
+        </div>
+        <button onclick="document.getElementById('androidPwaModalOverlay').remove()" style="background:none; border:none; color:var(--pencil); font-size:20px; cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Platform Switch Tabs -->
+      <div class="tab-group" style="margin-bottom:14px;">
+        <button type="button" class="tab-btn ${!isIOS ? 'active' : ''}" style="flex:1; font-size:12.5px;" onclick="setInstallGuideTab('android')">🤖 Android (Chrome)</button>
+        <button type="button" class="tab-btn ${isIOS ? 'active' : ''}" style="flex:1; font-size:12.5px;" onclick="setInstallGuideTab('ios')">🍏 iPhone / iPad (iOS)</button>
+      </div>
+
+      ${isIOS ? `
+        <div style="background:#F0F9FF; border:1px solid #BAE6FD; border-radius:10px; padding:11px 13px; margin-bottom:14px; font-size:12px; color:#0369A1; line-height:1.45;">
+          🍏 <b>Apple iOS নিয়ম:</b> অ্যাপল তাদের সিকিউরিটি পলিসির কারণে আইফোনে ওয়েবসাইট থেকে অটোমেটিক ১-ক্লিক ইনস্টল বন্ধ রেখেছে। তবে নিচের ৩টি ক্লিকেই অ্যাপটি সরাসরি আইফোনের হোমস্ক্রিনে চলে আসবে:
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px; font-size:13px; color:var(--ink); margin-bottom:16px;">
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:26px; height:26px; border-radius:50%; background:#0284C7; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;">১</div>
+            <div>আইফোনের <b>Safari</b> ব্রাউজারের নিচে থাকা <b>Share বাটন [ ⎋ / 📤 ]</b> (তীর দেওয়া চারকোনা আইকন)-এ ট্যাপ করুন।</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:26px; height:26px; border-radius:50%; background:#0284C7; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;">২</div>
+            <div>একটু নিচে স্ক্রোল করে <b>"Add to Home Screen" (➕ হোম স্ক্রিনে যোগ করুন)</b> অপশনটিতে ট্যাপ করুন।</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:26px; height:26px; border-radius:50%; background:#0284C7; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;">৩</div>
+            <div>উপরে ডানদিকের <b>"Add"</b> বাটনে চাপ দিন। আপনার আইফোনে এটি রিয়েল ফুলস্ক্রিন অ্যাপ হিসেবে যুক্ত হয়ে যাবে!</div>
+          </div>
+        </div>
+      ` : `
+        <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:10px; padding:11px 13px; margin-bottom:14px; font-size:12px; color:#166534; line-height:1.45;">
+          ⚡ <b>Google WebAPK প্রযুক্তি:</b> ক্রোম ব্রাউজার এই সাইটটিকে সরাসরি আপনার অ্যান্ড্রয়েড ফোনের জন্য একটি পূর্ণাঙ্গ এপিকে অ্যাপে কনভার্ট করে দেয়!
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px; font-size:13px; color:var(--ink); margin-bottom:16px;">
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:26px; height:26px; border-radius:50%; background:var(--ink); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;">১</div>
+            <div>Google Chrome ব্রাউজারের উপরে ডানদিকের <b>৩টি ডট মেনু (⋮)</b>-তে ট্যাপ করুন।</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:26px; height:26px; border-radius:50%; background:var(--ink); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;">২</div>
+            <div>মেন্যু থেকে <b>"Install app"</b> বা <b>"Add to Home screen" (হোম স্ক্রিনে যোগ করুন)</b> অপশনে ট্যাপ করুন।</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="width:26px; height:26px; border-radius:50%; background:var(--ink); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0;">৩</div>
+            <div>পপআপ আসলে <b>"Install"</b> বাটনে চাপলেই সরাসরি আসল অ্যান্ড্রয়েড অ্যাপ হিসেবে ইনস্টল শুরু হয়ে যাবে!</div>
+          </div>
+        </div>
+      `}
+
+      <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:10px 12px; margin-bottom:16px;">
+        <div style="font-size:11.5px; font-weight:700; color:var(--ink); margin-bottom:4px;">✨ অ্যাপ হিসেবে ব্যবহারের বিশেষ সুবিধা:</div>
+        <ul style="margin:0; padding-left:18px; font-size:12px; color:var(--pencil); line-height:1.5;">
+          <li>ব্রাউজারের অ্যাড্রেস বার ছাড়া ফুলস্ক্রিন ফাস্ট অ্যাপ</li>
+          <li>অফলাইনেও বিগত প্রশ্ন, নোটস ও উত্তর পড়া যাবে</li>
+          <li>হোমস্ক্রিনের অ্যাপ আইকন থেকে ১-ট্যাপে ওপেন হবে</li>
+        </ul>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        ${deferredPwaPrompt ? `
+          <button class="btn btn-gold btn-block" onclick="deferredPwaPrompt.prompt(); document.getElementById('androidPwaModalOverlay').remove();">📲 এখনই সরাসরি ইনস্টল করুন</button>
+        ` : `
+          <button class="btn btn-primary btn-block" onclick="document.getElementById('androidPwaModalOverlay').remove(); toast(currentInstallGuideTab === 'ios' ? 'Safari-র Share বাটন থেকে Add to Home Screen চাপুন' : 'Chrome-এর (⋮) মেনু থেকে Install app চাপুন');">বুঝতে পেরেছি ✓</button>
+        `}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
 };
 
 if('serviceWorker' in navigator){
@@ -340,7 +435,12 @@ function getLoggedStudent(){
   }catch(e){ return null; }
 }
 function setLoggedStudent(stud){
-  try{ localStorage.setItem('tuition_logged_student', JSON.stringify(stud)); }catch(e){}
+  try{ 
+    localStorage.setItem('tuition_logged_student', JSON.stringify(stud)); 
+    if(stud && stud.slug && typeof ensureUserCryptoKeys === 'function'){
+      ensureUserCryptoKeys(stud.slug).catch(() => {});
+    }
+  }catch(e){}
 }
 function clearLoggedStudent(){
   try{ localStorage.removeItem('tuition_logged_student'); }catch(e){}
